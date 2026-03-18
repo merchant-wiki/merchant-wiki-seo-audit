@@ -24,6 +24,7 @@ npm-debug.log*
 node_modules/
 vendor/
 .env
+out/
 
 # Ignore local config files with passwords
 wp-config-local.php
