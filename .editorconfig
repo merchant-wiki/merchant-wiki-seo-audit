@@ -1,0 +1,43 @@
+# Root EditorConfig for the plugin
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# PHP & includes — tabs per WP Coding Standards
+[*.{php,inc}]
+indent_style = tab
+tab_width = 4
+
+# JS/TS/CSS/SCSS — tabs per WP standards
+[*.{js,jsx,ts,tsx,css,scss,less}]
+indent_style = tab
+tab_width = 4
+
+# JSON / YAML / XML / MD — 2 spaces
+[*.{json,yml,yaml,xml}]
+indent_style = space
+indent_size = 2
+
+# Markdown: не обрезаем хвостовые пробелы (могут быть значимы)
+[*.md]
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = false
+
+# Shell / config snippets — на вкус, оставим 2
+[*.{sh,bash,zsh}]
+indent_style = space
+indent_size = 2
+
+# PO (текст), MO (бинарь), POT (шаблон)
+[*.po]
+indent_style = tab
+tab_width = 4
+
+[*.pot]
+indent_style = space
+indent_size = 2

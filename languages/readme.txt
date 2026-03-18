@@ -1,0 +1,1 @@
+Place .po/.mo files here. Text Domain: merchant-wiki-audit

@@ -1,0 +1,36 @@
+# System files of macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Settings of the VS Code editor
+.vscode/
+*.code-workspace
+
+# Temporary files and logs of WordPress
+*.log
+wp-content/debug.log
+wp-content/uploads/
+npm-debug.log*
+
+# Archives and backups (in order not occasionally send heavy files)
+*.zip
+*.tar.gz
+*.rar
+*.sql
+
+# Plugin files, which are not needed in the repo
+# Ex, if you used local tests or specific configs
+node_modules/
+vendor/
+.env
+
+# Ignore local config files with passwords
+wp-config-local.php
+secrets.json
+
+# my previous version and local technical files
+source-*-*.txt
+*.zip
+make_single_source.py
+Pack Source.command.sh
