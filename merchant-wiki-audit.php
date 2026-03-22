@@ -6,6 +6,8 @@
  * Version: 1.8.2
  * Author: Merchant.WiKi
  * Author URI: https://merchant.wiki/
+ * License: GPLv3 or later
+ * License URI: https://www.gnu.org/licenses/gpl-3.0.html
  * Text Domain: merchant-wiki-audit
  * Domain Path: /languages
  */

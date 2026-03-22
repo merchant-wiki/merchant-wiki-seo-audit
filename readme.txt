@@ -1,14 +1,16 @@
 === Merchant.WiKi SEO Audit ===
-Contributors: merchantwiki
+Contributors: Merchant.WiKi
 Plugin URI: https://merchant.wiki/
 Author URI: https://merchant.wiki/
 Tags: seo, indexing, sitemap, google search console, audit
 Requires at least: 6.7
 Tested up to: 6.7
 Requires PHP: 8.0
-Stable tag: 1.8.2
+Stable tag: trunk
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
+
+== Description ==
 
 Merchant.WiKi SEO Audit — Where It Helps
 1. Launch inventory baselines after migrations or redesigns to catch missing URLs, sitemap gaps, and misconfigured canonicals.
@@ -25,6 +27,19 @@ Disclaimer
 • This plugin is currently in beta. Install it on staging or a fresh backup copy first.
 • Always take full file + database backups before running the audit queues or deleting data.
 • Merchant.WiKi provides the software “as-is” and is not liable for any data loss or downtime.
+
+== Installation ==
+
+1. Upload the plugin files to the `/wp-content/plugins/merchant-wiki-audit` directory, or install the plugin through the WordPress plugins screen directly.
+2. Activate the plugin through the 'Plugins' screen in WordPress.
+3. Use the MW Audit menu in the WordPress admin to access the plugin features.
+
+== Screenshots ==
+
+1. Dashboard overview with health cards and queue status.
+2. Operations page (Rebuild Inventory / Refresh signals etc.).
+3. Reports table and filter controls.
+4. Settings / Google Search Console integration.
 
 ---------------------
 
@@ -248,3 +263,8 @@ updated_at → timestamp when this record was last refreshed in the inventory.
 You must be a verified owner of the site in Google Search Console to use the plugin.
 
 Index coverage data can lag behind reality by several days.
+
+== Changelog ==
+
+= 1.8.2 =
+* Initial release for WordPress.org
