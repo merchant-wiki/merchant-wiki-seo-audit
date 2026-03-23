@@ -4,9 +4,9 @@ Plugin URI: https://merchant.wiki/
 Author URI: https://merchant.wiki/
 Tags: seo, indexing, sitemap, google search console, audit
 Requires at least: 6.7
-Tested up to: 6.7
+Tested up to: 6.9.4
 Requires PHP: 8.0
-Stable tag: trunk
+Stable tag: 1.8.2
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 

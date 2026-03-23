@@ -1831,20 +1831,6 @@ function mw_audit_render_page($view = 'dashboard') {
 		</div>
 	<?php endif; ?>
 
-	<p class="mw-powered-by">
-		<?php
-		printf(
-			/* translators: %s: Merchant.WiKi link */
-			esc_html__('Powered by %s', 'merchant-wiki-audit'),
-			sprintf(
-				'<a href="%s" target="_blank" rel="noopener">%s</a>',
-				esc_url('https://merchant.wiki/'),
-				esc_html__('Merchant.WiKi', 'merchant-wiki-audit')
-			)
-		);
-		?>
-	</p>
-
 	</div><!-- /.wrap -->
 <?php
 }
