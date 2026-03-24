@@ -217,15 +217,35 @@ class MW_Audit_GSC {
     return $row;
   }
 
+  private static function get_cache_table(){
+    static $table = null;
+    if ($table !== null){
+      return $table;
+    }
+    $table = MW_Audit_DB::esc_table(MW_Audit_DB::t_gsc_cache());
+    return $table;
+  }
+
   public static function get_cache_row($url, $source = 'inspection'){
     global $wpdb;
-    $table = MW_Audit_DB::t_gsc_cache();
+    $table = self::get_cache_table();
+    if (!$table){
+      return null;
+    }
     $norm = self::normalize_cache_url($url);
     if ($norm === ''){
       return null;
     }
     $source = self::normalize_source_key($source);
-    $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table WHERE norm_url=%s AND source=%s LIMIT 1", $norm, $source), ARRAY_A);
+    $row = $wpdb->get_row(
+      $wpdb->prepare(
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name sanitized via get_cache_table().
+        "SELECT * FROM {$table} WHERE norm_url=%s AND source=%s LIMIT 1",
+        $norm,
+        $source
+      ),
+      ARRAY_A
+    );
     if ($wpdb->last_error){
       MW_Audit_DB::log('GSC cache fetch error: '.$wpdb->last_error);
     }
@@ -234,7 +254,10 @@ class MW_Audit_GSC {
 
   public static function get_cache_rows(array $urls, $source = 'inspection'){
     global $wpdb;
-    $table = MW_Audit_DB::t_gsc_cache();
+    $table = self::get_cache_table();
+    if (!$table){
+      return [];
+    }
     $norms = [];
     foreach ($urls as $url){
       $norm = self::normalize_cache_url($url);
@@ -248,7 +271,8 @@ class MW_Audit_GSC {
     $source = self::normalize_source_key($source);
     $placeholders = implode(',', array_fill(0, count($norms), '%s'));
     $query = $wpdb->prepare(
-      "SELECT * FROM $table WHERE source=%s AND norm_url IN ($placeholders)",
+      // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name sanitized via get_cache_table().
+      "SELECT * FROM {$table} WHERE source=%s AND norm_url IN ($placeholders)",
       array_merge([$source], array_keys($norms))
     );
     $rows = $wpdb->get_results($query, ARRAY_A);
@@ -278,7 +302,10 @@ class MW_Audit_GSC {
 
   public static function upsert_cache_row($url, array $data, $source = 'inspection'){
     global $wpdb;
-    $table = MW_Audit_DB::t_gsc_cache();
+    $table = self::get_cache_table();
+    if (!$table){
+      return false;
+    }
     $norm = self::normalize_cache_url($url);
     if ($norm === ''){
       return false;
@@ -609,15 +636,42 @@ class MW_Audit_GSC {
 
   private static function read_csv_rows($file_path, $delimiter = ','){
     $rows = [];
-    $handle = fopen($file_path, 'r');
-    if (!$handle){
+    $contents = self::get_file_contents($file_path);
+    if ($contents === ''){
       return $rows;
     }
-    while (($data = fgetcsv($handle, 0, $delimiter)) !== false){
+    $temp = new SplTempFileObject();
+    $temp->setFlags(SplFileObject::READ_CSV);
+    $temp->setCsvControl($delimiter);
+    $temp->fwrite($contents);
+    $temp->rewind();
+    foreach ($temp as $data){
+      if ($data === false || $data === null){
+        continue;
+      }
+      if (count($data) === 1 && $data[0] === null){
+        continue;
+      }
       $rows[] = $data;
     }
-    fclose($handle);
     return $rows;
+  }
+
+  private static function get_file_contents($file_path){
+    if (!function_exists('WP_Filesystem')){
+      require_once ABSPATH.'wp-admin/includes/file.php';
+    }
+    global $wp_filesystem;
+    if (!is_object($wp_filesystem)){
+      if (!WP_Filesystem()){
+        return '';
+      }
+    }
+    if (!is_object($wp_filesystem) || !$wp_filesystem->exists($file_path) || !$wp_filesystem->is_readable($file_path)){
+      return '';
+    }
+    $contents = $wp_filesystem->get_contents($file_path);
+    return is_string($contents) ? $contents : '';
   }
 
   private static function csv_is_single_column(array $rows){
@@ -1108,12 +1162,14 @@ class MW_Audit_GSC {
 
   public static function handle_oauth_callback(){
     if (!self::is_configured()){
-      wp_die(__('Google Search Console credentials are not configured.','merchant-wiki-audit'));
+      wp_die(esc_html__('Google Search Console credentials are not configured.','merchant-wiki-audit'));
     }
-    $state = isset($_GET['state']) ? sanitize_key(wp_unslash($_GET['state'])) : 'default';
-    $code = isset($_GET['code']) ? sanitize_text_field(wp_unslash($_GET['code'])) : '';
+    $state_raw = isset($_GET['state']) ? wp_unslash($_GET['state']) : null; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- OAuth callback cannot include nonce.
+    $state = $state_raw ? sanitize_key($state_raw) : 'default';
+    $code_raw = isset($_GET['code']) ? wp_unslash($_GET['code']) : null; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- OAuth callback cannot include nonce.
+    $code = $code_raw ? sanitize_text_field($code_raw) : '';
     if (!$code){
-      wp_die(__('Missing authorization code.','merchant-wiki-audit'));
+      wp_die(esc_html__('Missing authorization code.','merchant-wiki-audit'));
     }
     $body = [
       'code'          => $code,
@@ -1127,18 +1183,21 @@ class MW_Audit_GSC {
       'body'    => $body,
     ]);
     if (is_wp_error($response)){
-      wp_die(__('Failed to exchange authorization code: ','merchant-wiki-audit').$response->get_error_message());
+      wp_die(
+        esc_html__('Failed to exchange authorization code: ','merchant-wiki-audit') .
+        esc_html($response->get_error_message())
+      );
     }
     $code_http = (int) wp_remote_retrieve_response_code($response);
     $data = json_decode(wp_remote_retrieve_body($response), true);
     if ($code_http !== 200 || empty($data['access_token'])){
-      wp_die(__('Failed to obtain access token.','merchant-wiki-audit'));
+      wp_die(esc_html__('Failed to obtain access token.','merchant-wiki-audit'));
     }
     $refresh = isset($data['refresh_token']) ? $data['refresh_token'] : '';
     if (!$refresh){
       $refresh = self::get_refresh_token();
       if (!$refresh){
-        wp_die(__('Google did not return a refresh token. Ensure you allow offline access.','merchant-wiki-audit'));
+        wp_die(esc_html__('Google did not return a refresh token. Ensure you allow offline access.','merchant-wiki-audit'));
       }
     }
     self::save_tokens($data['access_token'], $data['expires_in'] ?? 3600, $refresh);
@@ -1253,9 +1312,17 @@ class MW_Audit_GSC {
     $ttl_hours = self::get_api_ttl_hours();
 
     foreach ($urls as $url){
+      $safe_url_label = esc_url_raw($url);
+      if ($safe_url_label === ''){
+        $safe_url_label = esc_html($url);
+      }
       $norm = self::normalize_cache_url($url);
       if ($norm === ''){
-        $message = sprintf(__('Invalid URL provided: %s','merchant-wiki-audit'), esc_html($url));
+        $message = sprintf(
+          /* translators: %s: URL provided for inspection */
+          __('Invalid URL provided: %1$s','merchant-wiki-audit'),
+          $safe_url_label
+        );
         $results[$url] = ['indexed'=>null,'error'=>$message];
         $errors[] = $message;
         $meta['api_errors']++;
@@ -1302,7 +1369,12 @@ class MW_Audit_GSC {
       ]);
       $meta['api_calls']++;
       if (is_wp_error($response)){
-        $message = sprintf(__('Error inspecting %s: %s','merchant-wiki-audit'), $url, $response->get_error_message());
+        $message = sprintf(
+          /* translators: 1: URL being inspected, 2: error message text */
+          __('Error inspecting %1$s: %2$s','merchant-wiki-audit'),
+          $safe_url_label,
+          $response->get_error_message()
+        );
         $results[$url] = ['indexed'=>null,'error'=>$message,'source'=>'inspection'];
         $errors[] = $message;
         self::mark_inspection_error($url, $response->get_error_message());
@@ -1314,7 +1386,12 @@ class MW_Audit_GSC {
       if ($code !== 200){
         $message = isset($data['error']['message']) ? $data['error']['message'] : wp_remote_retrieve_body($response);
         $results[$url] = ['indexed'=>null,'error'=>$message,'source'=>'inspection'];
-        $errors[] = sprintf(__('Error inspecting %s: %s','merchant-wiki-audit'), $url, $message);
+        $errors[] = sprintf(
+          /* translators: 1: URL being inspected, 2: error message text */
+          __('Error inspecting %1$s: %2$s','merchant-wiki-audit'),
+          $safe_url_label,
+          $message
+        );
         if ($code === 401 || $code === 403){
           self::delete_option('access_token');
         }
@@ -1356,9 +1433,10 @@ class MW_Audit_GSC {
     $timeout_like = '_transient_timeout_'.self::CACHE_PREFIX.'%';
     $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", $like));
     $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", $timeout_like));
-    if (method_exists('MW_Audit_DB','t_gsc_cache')){
-      $cache_table = MW_Audit_DB::t_gsc_cache();
-      $wpdb->query("TRUNCATE TABLE $cache_table");
+    $cache_table = self::get_cache_table();
+    if ($cache_table){
+      // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name sanitized via get_cache_table().
+      $wpdb->query("TRUNCATE TABLE {$cache_table}");
     }
   }
 }

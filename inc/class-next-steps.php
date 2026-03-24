@@ -10,8 +10,12 @@ class MW_Audit_Next_Steps {
    */
   public static function quick_audit_rows(){
     global $wpdb;
-    $inv = MW_Audit_DB::t_inventory();
-    $st  = MW_Audit_DB::t_status();
+    $inv = MW_Audit_DB::table_inventory_name();
+    $st  = MW_Audit_DB::table_status_name();
+    if (!$inv || !$st){
+      return [];
+    }
+    // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- tables sanitized via MW_Audit_DB::table_*.
     $sql = "
       SELECT i.norm_url,
              s.id AS status_id,
@@ -22,8 +26,8 @@ class MW_Audit_Next_Steps {
              s.robots_meta,
              s.redirect_to,
              s.updated_at
-      FROM $inv i
-      LEFT JOIN $st s ON s.norm_url = i.norm_url
+      FROM {$inv} i
+      LEFT JOIN {$st} s ON s.norm_url = i.norm_url
       WHERE s.id IS NULL
          OR s.http_status IS NULL
          OR s.http_status <> 200
@@ -47,9 +51,12 @@ class MW_Audit_Next_Steps {
   public static function manual_index_rows($threshold = 0){
     global $wpdb;
     $threshold = max(0, (int) $threshold);
-    $inv = MW_Audit_DB::t_inventory();
-    $st  = MW_Audit_DB::t_status();
-    $cache = MW_Audit_DB::t_gsc_cache();
+    $inv = MW_Audit_DB::table_inventory_name();
+    $st  = MW_Audit_DB::table_status_name();
+    $cache = MW_Audit_DB::table_gsc_cache_name();
+    if (!$inv || !$st || !$cache){
+      return [];
+    }
     $cache_has_reason   = MW_Audit_DB::table_has_column($cache, 'reason_label');
     $cache_has_pi       = MW_Audit_DB::table_has_column($cache, 'pi_reason_raw');
     $likely_states = [];
@@ -63,6 +70,7 @@ class MW_Audit_Next_Steps {
       $state_clause = "OR g_ins.coverage_state IN ($placeholders) OR g_page.coverage_state IN ($placeholders)";
       $params = array_merge($params, $likely_states, $likely_states);
     }
+    // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- tables sanitized via MW_Audit_DB::table_*.
     $sql = "
       SELECT i.norm_url,
              s.http_status,
@@ -79,10 +87,10 @@ class MW_Audit_Next_Steps {
              ".($cache_has_reason ? 'g_page.reason_label AS page_reason,' : 'NULL AS page_reason,')."
              ".($cache_has_pi ? 'g_page.pi_reason_raw AS page_reason_raw,' : 'NULL AS page_reason_raw,')."
              g_page.inspected_at AS page_checked
-      FROM $inv i
-      INNER JOIN $st s ON s.norm_url = i.norm_url
-      LEFT JOIN $cache g_ins ON g_ins.norm_url = i.norm_url AND g_ins.source='inspection'
-      LEFT JOIN $cache g_page ON g_page.norm_url = i.norm_url AND g_page.source='page_indexing'
+      FROM {$inv} i
+      INNER JOIN {$st} s ON s.norm_url = i.norm_url
+      LEFT JOIN {$cache} g_ins ON g_ins.norm_url = i.norm_url AND g_ins.source='inspection'
+      LEFT JOIN {$cache} g_page ON g_page.norm_url = i.norm_url AND g_page.source='page_indexing'
       WHERE s.http_status = 200
         AND (s.noindex IS NULL OR s.noindex = 0)
         AND COALESCE(s.inbound_links, 0) <= %d
@@ -107,11 +115,15 @@ class MW_Audit_Next_Steps {
    */
   public static function content_pruning_rows(){
     global $wpdb;
-    $inv = MW_Audit_DB::t_inventory();
-    $st  = MW_Audit_DB::t_status();
-    $out = MW_Audit_DB::t_outbound();
-    $cache = MW_Audit_DB::t_gsc_cache();
+    $inv = MW_Audit_DB::table_inventory_name();
+    $st  = MW_Audit_DB::table_status_name();
+    $out = MW_Audit_DB::table_outbound_name();
+    $cache = MW_Audit_DB::table_gsc_cache_name();
+    if (!$inv || !$st || !$out || !$cache){
+      return [];
+    }
     $cache_has_reason = MW_Audit_DB::table_has_column($cache, 'reason_label');
+    // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- tables sanitized via MW_Audit_DB::table_*.
     $sql = "
       SELECT i.norm_url,
              s.http_status,
@@ -129,11 +141,11 @@ class MW_Audit_Next_Steps {
              g_page.coverage_state AS page_coverage,
              ".($cache_has_reason ? 'g_page.reason_label AS page_reason,' : 'NULL AS page_reason,')."
              g_page.inspected_at AS page_checked
-      FROM $inv i
-      INNER JOIN $st s ON s.norm_url = i.norm_url
-      LEFT JOIN $out ob ON ob.norm_url = i.norm_url
-      LEFT JOIN $cache g_ins ON g_ins.norm_url = i.norm_url AND g_ins.source='inspection'
-      LEFT JOIN $cache g_page ON g_page.norm_url = i.norm_url AND g_page.source='page_indexing'
+      FROM {$inv} i
+      INNER JOIN {$st} s ON s.norm_url = i.norm_url
+      LEFT JOIN {$out} ob ON ob.norm_url = i.norm_url
+      LEFT JOIN {$cache} g_ins ON g_ins.norm_url = i.norm_url AND g_ins.source='inspection'
+      LEFT JOIN {$cache} g_page ON g_page.norm_url = i.norm_url AND g_page.source='page_indexing'
       WHERE COALESCE(s.inbound_links, 0) = 0
         AND COALESCE(ob.outbound_external_domains, 0) > 0
         AND (
@@ -156,8 +168,12 @@ class MW_Audit_Next_Steps {
    */
   public static function snapshot_rows(){
     global $wpdb;
-    $inv = MW_Audit_DB::t_inventory();
-    $st  = MW_Audit_DB::t_status();
+    $inv = MW_Audit_DB::table_inventory_name();
+    $st  = MW_Audit_DB::table_status_name();
+    if (!$inv || !$st){
+      return [];
+    }
+    // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- tables sanitized via MW_Audit_DB::table_*.
     $sql = "
       SELECT i.norm_url,
              s.http_status,
@@ -166,8 +182,8 @@ class MW_Audit_Next_Steps {
              s.in_sitemap,
              s.noindex,
              s.updated_at
-      FROM $inv i
-      LEFT JOIN $st s ON s.norm_url = i.norm_url
+      FROM {$inv} i
+      LEFT JOIN {$st} s ON s.norm_url = i.norm_url
       ORDER BY i.norm_url ASC
     ";
     return $wpdb->get_results($sql, ARRAY_A) ?: [];
@@ -184,7 +200,11 @@ class MW_Audit_Next_Steps {
     }
     $label = trim((string) $label);
     if ($label === ''){
-      $label = sprintf(__('Snapshot %s','merchant-wiki-audit'), current_time('Y-m-d H:i'));
+      $label = sprintf(
+        /* translators: %s: snapshot timestamp */
+        __('Snapshot %s','merchant-wiki-audit'),
+        current_time('Y-m-d H:i')
+      );
     }
     $id = 'launch-'.gmdate('Ymd-Hi');
     $filename = $id.'.json.gz';
@@ -312,7 +332,8 @@ class MW_Audit_Next_Steps {
   public static function action_export_manual(){
     self::ensure_capability();
     check_admin_referer('mw_next_steps_manual');
-    $threshold = isset($_POST['threshold']) ? (int) wp_unslash($_POST['threshold']) : 0;
+    $threshold_raw = filter_input(INPUT_POST, 'threshold', FILTER_SANITIZE_NUMBER_INT);
+    $threshold = is_numeric($threshold_raw) ? (int) $threshold_raw : 0;
     $rows = self::manual_index_rows($threshold);
     $filename = sprintf('mw-manual-indexing-%dlinks.csv', $threshold);
     self::stream_csv($filename, self::manual_header(), $rows);
@@ -330,7 +351,8 @@ class MW_Audit_Next_Steps {
   public static function action_create_snapshot(){
     self::ensure_capability();
     check_admin_referer('mw_next_steps_snapshot');
-    $label = isset($_POST['snapshot_label']) ? sanitize_text_field(wp_unslash($_POST['snapshot_label'])) : '';
+    $label_raw = filter_input(INPUT_POST, 'snapshot_label', FILTER_SANITIZE_SPECIAL_CHARS);
+    $label = $label_raw ? sanitize_text_field($label_raw) : '';
     $result = self::create_snapshot($label);
     $redirect = menu_page_url('mw-site-index-reports', false);
     if (!$redirect){
@@ -351,8 +373,10 @@ class MW_Audit_Next_Steps {
   public static function action_diff_snapshots(){
     self::ensure_capability();
     check_admin_referer('mw_next_steps_diff');
-    $older = isset($_POST['snapshot_old']) ? sanitize_text_field(wp_unslash($_POST['snapshot_old'])) : '';
-    $newer = isset($_POST['snapshot_new']) ? sanitize_text_field(wp_unslash($_POST['snapshot_new'])) : '';
+    $older_raw = filter_input(INPUT_POST, 'snapshot_old', FILTER_SANITIZE_SPECIAL_CHARS);
+    $older = $older_raw ? sanitize_text_field($older_raw) : '';
+    $newer_raw = filter_input(INPUT_POST, 'snapshot_new', FILTER_SANITIZE_SPECIAL_CHARS);
+    $newer = $newer_raw ? sanitize_text_field($newer_raw) : '';
     $redirect = menu_page_url('mw-site-index-reports', false);
     if (!$redirect){
       $redirect = admin_url('admin.php?page=mw-site-index-reports');
@@ -380,7 +404,14 @@ class MW_Audit_Next_Steps {
     }
     $fh = fopen($path, 'w');
     if (!$fh){
-      return new WP_Error('mw_next_steps_csv', sprintf(__('Unable to open %s for writing.','merchant-wiki-audit'), $path));
+      return new WP_Error(
+        'mw_next_steps_csv',
+        sprintf(
+          /* translators: %s: file path */
+          __('Unable to open %s for writing.','merchant-wiki-audit'),
+          $path
+        )
+      );
     }
     $keys = array_keys($header_map);
     fputcsv($fh, array_values($header_map));
@@ -551,7 +582,7 @@ class MW_Audit_Next_Steps {
     }
     $path = trailingslashit($env['dir']).$meta['filename'];
     if (file_exists($path)){
-      @unlink($path);
+      wp_delete_file($path);
     }
   }
 
