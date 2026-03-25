@@ -29,8 +29,15 @@ class MW_Audit_Inventory_Builder {
 
     $terms_total = 0;
     foreach ($taxes as $tax){
-      $c = wp_count_terms($tax, ['hide_empty'=>false]);
-      if (!is_wp_error($c)) $terms_total += (int) $c;
+      $count_args = [
+        'taxonomy'   => $tax,
+        'hide_empty' => false,
+        'fields'     => 'count',
+      ];
+      $c = get_terms($count_args);
+      if (!is_wp_error($c)){
+        $terms_total += (int) $c;
+      }
     }
 
     return [
@@ -166,19 +173,22 @@ class MW_Audit_Inventory_Builder {
   }
 
   public static function fetch_post_batch($types, $last_id, $limit){
-    global $wpdb;
     if (empty($types)) return [];
     $limit = max(1, (int)$limit);
     $placeholders = implode(',', array_fill(0, count($types), '%s'));
-    $sql = "SELECT ID FROM {$wpdb->posts}
+    $posts_table = MW_Audit_DB::esc_table(MW_Audit_DB::posts_table());
+    if ($posts_table === ''){
+      return [];
+    }
+    $sql = "SELECT ID FROM {$posts_table}
             WHERE post_status = 'publish'
               AND post_type IN ($placeholders)
               AND ID > %d
             ORDER BY ID ASC
             LIMIT %d";
     $params = array_merge($types, [(int)$last_id, $limit]);
-    $query = $wpdb->prepare($sql, ...$params);
-    $ids = $wpdb->get_col($query);
+    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.NoCaching
+    $ids = MW_Audit_DB::get_col_sql($sql, $params);
     if (!$ids) return [];
     return array_map('intval', $ids);
   }
@@ -238,21 +248,24 @@ class MW_Audit_Inventory_Builder {
   }
 
   private static function fetch_term_batch($taxonomy, $last_term_id, $limit){
-    global $wpdb;
     $limit = max(1, (int) $limit);
     $last_term_id = max(0, (int) $last_term_id);
     $taxonomy = sanitize_key($taxonomy);
-    $sql = $wpdb->prepare(
+    $terms_table = MW_Audit_DB::esc_table(MW_Audit_DB::terms_table());
+    $tt_table = MW_Audit_DB::esc_table(MW_Audit_DB::term_taxonomy_table());
+    if ($terms_table === '' || $tt_table === ''){
+      return [];
+    }
+    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.NoCaching
+    return MW_Audit_DB::get_results_sql(
       "SELECT t.term_id, t.slug
-       FROM {$wpdb->terms} t
-       INNER JOIN {$wpdb->term_taxonomy} tt ON t.term_id = tt.term_id
+       FROM {$terms_table} t
+       INNER JOIN {$tt_table} tt ON t.term_id = tt.term_id
        WHERE tt.taxonomy = %s AND t.term_id > %d
        ORDER BY t.term_id ASC
        LIMIT %d",
-      $taxonomy,
-      $last_term_id,
-      $limit
-    );
-    return $wpdb->get_results($sql, ARRAY_A) ?: [];
+      [$taxonomy, $last_term_id, $limit],
+      ARRAY_A
+    ) ?: [];
   }
 }

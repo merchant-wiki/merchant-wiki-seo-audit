@@ -37,13 +37,143 @@ class MW_Audit_Inventory {
     return (bool) get_transient(self::lock_key($process));
   }
 
+  private static function ensure_manage_capability(){
+    if (!current_user_can('manage_options')){
+      wp_die(esc_html__('Not allowed','merchant-wiki-audit'));
+    }
+  }
+
+  private static function safe_redirect($url){
+    wp_safe_redirect($url);
+    exit;
+  }
+
+  private static function delete_file_if_exists($path){
+    if (!$path){
+      return;
+    }
+    wp_delete_file($path);
+  }
+
+  private static function verify_post_nonce(){
+    $post_data = [];
+    if (!empty($_POST)){
+      $post_data = map_deep(wp_unslash($_POST), 'sanitize_text_field');
+    }
+    if (empty($post_data['mw_audit_nonce'])){
+      return;
+    }
+    check_admin_referer('mw_audit_action', 'mw_audit_nonce');
+    static $checked = false;
+    if ($checked){
+      return;
+    }
+    $checked = true;
+    $request_nonce = isset($post_data['mw_audit_request_nonce']) ? sanitize_key($post_data['mw_audit_request_nonce']) : '';
+    if ($request_nonce !== '' && !wp_verify_nonce($request_nonce, 'mw_audit_request')){
+      wp_die(esc_html__('Security check failed. Please refresh the page and try again.','merchant-wiki-audit'));
+    }
+  }
+
+  private static function verify_request_nonce(){
+    $post_data = [];
+    if (!empty($_POST)){
+      $post_data = map_deep(wp_unslash($_POST), 'sanitize_text_field');
+    }
+    static $checked = false;
+    if ($checked){
+      return;
+    }
+    $checked = true;
+    $request_nonce = isset($post_data['mw_audit_request_nonce']) ? sanitize_key($post_data['mw_audit_request_nonce']) : '';
+    if ($request_nonce !== '' && !wp_verify_nonce($request_nonce, 'mw_audit_request')){
+      wp_die(esc_html__('Security check failed. Please refresh the page and try again.','merchant-wiki-audit'));
+    }
+  }
+
+  private static function sanitize_input_value($value){
+    if (is_array($value)){
+      return array_map([self::class, 'sanitize_input_value'], $value);
+    }
+    return sanitize_text_field((string) $value);
+  }
+
+  private static function get_post_value($key, $default = null){
+    $post_data = [];
+    if (!empty($_POST)){
+      $post_data = map_deep(wp_unslash($_POST), 'sanitize_text_field');
+    }
+    if (empty($post_data['mw_audit_nonce'])){
+      return $default;
+    }
+    check_admin_referer('mw_audit_action', 'mw_audit_nonce');
+    $nonce_value = sanitize_key($post_data['mw_audit_nonce']);
+    if (!$nonce_value || !wp_verify_nonce($nonce_value, 'mw_audit_action')){
+      return $default;
+    }
+    self::verify_post_nonce();
+    if (array_key_exists($key, $post_data)){
+      return $post_data[$key];
+    }
+    return $default;
+  }
+
+  private static function get_query_value($key, $default = null){
+    $nonce_guard = isset($_POST['mw_audit_nonce']) ? sanitize_key(wp_unslash($_POST['mw_audit_nonce'])) : '';
+    if (!$nonce_guard || !wp_verify_nonce($nonce_guard, 'mw_audit_action')){
+      return $default;
+    }
+    $query_data = [];
+    if (!empty($_GET)){
+      $query_data = map_deep(wp_unslash($_GET), 'sanitize_text_field'); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+    }
+    if (array_key_exists($key, $query_data)){
+      return $query_data[$key];
+    }
+    return $default;
+  }
+
+  private static function get_request_value($key, $default = null){
+    $post_data = [];
+    if (!empty($_POST)){
+      $post_data = map_deep(wp_unslash($_POST), 'sanitize_text_field');
+    }
+    $query_data = [];
+    if (!empty($_GET)){
+      $query_data = map_deep(wp_unslash($_GET), 'sanitize_text_field');
+    }
+    $nonce_value = !empty($post_data['mw_audit_nonce']) ? sanitize_key($post_data['mw_audit_nonce']) : '';
+    if ($nonce_value && wp_verify_nonce($nonce_value, 'mw_audit_action')){
+      self::verify_request_nonce();
+      if (array_key_exists($key, $post_data)){
+        return $post_data[$key];
+      }
+    }
+    if (array_key_exists($key, $query_data)){
+      return $query_data[$key];
+    }
+    return $default;
+  }
+
+  private static function get_request_flag($key){
+    $value = self::get_request_value($key);
+    if ($value === null){
+      return false;
+    }
+    if (is_array($value)){
+      return !empty($value);
+    }
+    $value = strtolower(trim((string) $value));
+    return in_array($value, ['1','true','yes','on'], true);
+  }
+
   private static function read_int_param($key, $default, $min, $max){
     $options = ['options' => ['min_range' => (int) $min, 'max_range' => (int) $max]];
     $value = filter_input(INPUT_POST, $key, FILTER_VALIDATE_INT, $options);
     if ($value === false || $value === null){
-      $raw = self::post_raw_value($key);
+      $raw = self::get_post_value($key);
       if (is_string($raw) || is_numeric($raw)){
-        $raw = is_string($raw) ? trim($raw) : $raw;
+        $raw = is_string($raw) ? trim((string) $raw) : $raw;
         if (is_numeric($raw)){
           $value = (int) $raw;
         }
@@ -60,9 +190,9 @@ class MW_Audit_Inventory {
   private static function read_float_param($key, $default, $min, $max){
     $value = filter_input(INPUT_POST, $key, FILTER_VALIDATE_FLOAT);
     if ($value === false || $value === null){
-      $raw = self::post_raw_value($key);
+      $raw = self::get_post_value($key);
       if (is_string($raw) || is_numeric($raw)){
-        $raw = is_string($raw) ? trim(str_replace(',', '.', $raw)) : $raw;
+        $raw = is_string($raw) ? trim(str_replace(',', '.', (string) $raw)) : $raw;
         if (is_numeric($raw)){
           $value = (float) $raw;
         }
@@ -80,7 +210,7 @@ class MW_Audit_Inventory {
   private static function read_bool_param($key, $default = false){
     $value = filter_input(INPUT_POST, $key, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
     if ($value === null){
-      $raw = self::post_raw_value($key);
+      $raw = self::get_post_value($key);
       if (is_string($raw) || is_numeric($raw)){
         $raw = strtolower(trim((string) $raw));
         $value = in_array($raw, ['1','true','yes','on'], true);
@@ -95,35 +225,17 @@ class MW_Audit_Inventory {
     return (bool) $value;
   }
 
-  private static function post_raw_value($key){
-    $value = filter_input(INPUT_POST, $key, FILTER_UNSAFE_RAW);
-    if ($value === null && isset($_POST[$key])) {
-      // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.MissingUnslash
-      $value = $_POST[$key];
-    }
-    if ($value === null){
-      return null;
-    }
-    return wp_unslash($value);
+  private static function extend_time_limit($seconds = 0){
+    // Intentionally no operation in production.
   }
 
-  private static function request_raw_value($key){
-    $value = filter_input(INPUT_GET, $key, FILTER_UNSAFE_RAW);
-    if ($value === null){
-      $value = filter_input(INPUT_POST, $key, FILTER_UNSAFE_RAW);
-    }
-    if ($value === null && isset($_REQUEST[$key])) {
-      // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.MissingUnslash
-      $value = $_REQUEST[$key];
-    }
-    if ($value === null){
-      return null;
-    }
-    return wp_unslash($value);
+  private static function read_raw_post_string($key){
+    $value = self::get_post_value($key, '');
+    return is_string($value) ? $value : '';
   }
 
   private static function read_priority_threshold($key = 'threshold'){
-    $raw = self::request_raw_value($key);
+    $raw = self::get_request_value($key, 0);
     if (is_array($raw)){
       $raw = reset($raw);
     }
@@ -136,19 +248,17 @@ class MW_Audit_Inventory {
   }
 
   public static function get_status_filters_from_request(){
-    $source = [
-      'mw_filter_likely' => self::request_raw_value('mw_filter_likely'),
-      'mw_filter_stale'  => self::request_raw_value('mw_filter_stale'),
-      'mw_filter_never'  => self::request_raw_value('mw_filter_never'),
-      'mw_filter_new'    => self::request_raw_value('mw_filter_new'),
-    ];
     $filters = [
-      'only_likely' => !empty($source['mw_filter_likely']),
-      'stale'       => !empty($source['mw_filter_stale']),
-      'never'       => !empty($source['mw_filter_never']),
-      'new_hours'   => isset($source['mw_filter_new']) ? (int) $source['mw_filter_new'] : 0,
+      'only_likely' => self::get_request_flag('mw_filter_likely'),
+      'stale'       => self::get_request_flag('mw_filter_stale'),
+      'never'       => self::get_request_flag('mw_filter_never'),
+      'new_hours'   => 0,
       'likely_states' => class_exists('MW_Audit_GSC') ? MW_Audit_GSC::get_likely_not_indexed_reasons() : [],
     ];
+    $new_hours_raw = self::get_request_value('mw_filter_new');
+    if ($new_hours_raw !== null && $new_hours_raw !== ''){
+      $filters['new_hours'] = (int) $new_hours_raw;
+    }
     if ($filters['new_hours'] < 0){
       $filters['new_hours'] = 0;
     }
@@ -176,11 +286,11 @@ class MW_Audit_Inventory {
       $value = isset($raw['http_status']['value']) ? (int) $raw['http_status']['value'] : 200;
       if ($value > 0){
         $query['http_status'] = $value;
-        $summary[] = sprintf(
-          /* translators: %d: HTTP status code */
-          __('HTTP status = %1$d','merchant-wiki-audit'),
-          $value
-        );
+      $summary[] = sprintf(
+        /* translators: %d: HTTP status code value. */
+        __('HTTP status = %d','merchant-wiki-audit'),
+        $value
+      );
       }
     }
     if (!empty($raw['in_sitemap']['enabled'])){
@@ -206,11 +316,11 @@ class MW_Audit_Inventory {
       $path = isset($raw['pc_path']['value']) ? sanitize_text_field(wp_unslash($raw['pc_path']['value'])) : '';
       if ($path !== ''){
         $query['pc_path'] = $path;
-        $summary[] = sprintf(
-          /* translators: %s: primary category path prefix */
-          __('Primary category starts with “%1$s”.','merchant-wiki-audit'),
-          $path
-        );
+      $summary[] = sprintf(
+        /* translators: %s: primary category path prefix. */
+        __('Primary category starts with “%s”.','merchant-wiki-audit'),
+        $path
+      );
       }
     }
     if (!empty($raw['inbound']['enabled'])){
@@ -225,7 +335,7 @@ class MW_Audit_Inventory {
         $query['inbound_range']['baseline'] = $baseline;
       }
       $summary[] = sprintf(
-        /* translators: 1: minimum inbound links, 2: maximum inbound links */
+        /* translators: 1: minimum inbound links, 2: maximum inbound links. */
         __('Inbound links: %1$d–%2$d','merchant-wiki-audit'),
         $min,
         $max
@@ -243,7 +353,7 @@ class MW_Audit_Inventory {
         $query['age_range']['baseline'] = $baseline;
       }
       $summary[] = sprintf(
-        /* translators: 1: minimum days since last update, 2: maximum days since last update */
+        /* translators: 1: minimum days, 2: maximum days since last update. */
         __('Days since last update: %1$d–%2$d','merchant-wiki-audit'),
         $min,
         $max
@@ -320,7 +430,7 @@ class MW_Audit_Inventory {
 
   // POST actions
   static function action_rebuild_inventory(){
-    if (!current_user_can('manage_options')) wp_die(__('Not allowed','merchant-wiki-audit'));
+    self::ensure_manage_capability();
     check_admin_referer('mw_audit_rebuild');
     MW_Audit_DB::ensure_tables_if_missing();
     // reset flags
@@ -329,11 +439,11 @@ class MW_Audit_Inventory {
     if (class_exists('MW_Audit_GSC')) MW_Audit_GSC::clear_index_cache();
     foreach (['inv','sm','os','http','pc','link','gindex','pi'] as $k){ delete_option('mw_audit_flag_'.$k); delete_option('mw_audit_flag_'.$k.'_at'); }
     self::rebuild_inventory();
-    wp_safe_redirect( admin_url('admin.php?page=mw-site-index-audit&rebuilt=1') ); exit;
+    self::safe_redirect( admin_url('admin.php?page=mw-site-index-audit&rebuilt=1') );
   }
 
   static function action_export_csv(){
-    if (!current_user_can('manage_options')) wp_die(__('Not allowed','merchant-wiki-audit'));
+    self::ensure_manage_capability();
     check_admin_referer('mw_audit_export', 'mw_audit_export_nonce');
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="mw-audit-export.csv"');
@@ -345,7 +455,6 @@ class MW_Audit_Inventory {
       'norm_url'=>1,'obj_type'=>1,'obj_id'=>1,'slug'=>1,'published_at'=>1,'http_status'=>1,'redirect_to'=>1,'canonical'=>1,'robots_meta'=>1,'noindex'=>1,'schema_type'=>1,'in_sitemap'=>1,'robots_disallow'=>1,'inbound_links'=>1,'indexed_in_google'=>1,'updated_at'=>1,'pc_name'=>1,'pc_path'=>1,'gsc_coverage_inspection'=>1,'gsc_verdict'=>1,'gsc_inspected_at'=>1,'gsc_ttl_until'=>1,'gsc_last_error'=>1,'gsc_coverage_page'=>1,'gsc_pi_reason'=>1,'gsc_pi_inspected_at'=>1
     ];
     $filters = self::get_status_filters_from_request();
-    MW_Audit_DB::log('MW Audit Export filters: '.wp_json_encode($filters));
     do {
       $rows = MW_Audit_DB::get_status_rows($batch, $offset, 'norm_url', 'ASC', $filters);
       if (!$wrote_header){
@@ -362,7 +471,7 @@ class MW_Audit_Inventory {
   }
 
   static function action_delete_all_data(){
-    if (!current_user_can('manage_options')) wp_die(__('Not allowed','merchant-wiki-audit'));
+    self::ensure_manage_capability();
     check_admin_referer('mw_audit_delete_all', 'mw_audit_delete_all_nonce');
     MW_Audit_DB::delete_all();
     foreach (['inv','sm','os','http','pc','link','gindex','pi'] as $k){ delete_option('mw_audit_flag_'.$k); delete_option('mw_audit_flag_'.$k.'_at'); }
@@ -381,86 +490,95 @@ class MW_Audit_Inventory {
     foreach (['inventory','refresh','http','pc','links','gindex'] as $lock){
       delete_transient(self::lock_key($lock));
     }
-    wp_safe_redirect( admin_url('admin.php?page=mw-site-index-audit&deleted=1') ); exit;
+    self::safe_redirect( admin_url('admin.php?page=mw-site-index-audit&deleted=1') );
   }
 
   static function action_selftest(){
-    if (!current_user_can('manage_options')) wp_die(__('Not allowed','merchant-wiki-audit'));
+    self::ensure_manage_capability();
     check_admin_referer('mw_audit_selftest', 'mw_audit_selftest_nonce');
-    global $wpdb; $inv=MW_Audit_DB::t_inventory();
-    $ok = $wpdb->insert($inv, ['norm_url'=>home_url('/'), 'obj_type'=>'selftest', 'obj_id'=>0, 'slug'=>'', 'created_at'=>current_time('mysql')]);
-    $cnt = (int)$wpdb->get_var("SELECT COUNT(*) FROM $inv");
-    $err = $wpdb->last_error ?: '—';
-    wp_die('SelfTest: insert='.($ok!==false?'OK':'FAIL').' | count='.$cnt.' | last_error='.$err);
+    $inv = MW_Audit_DB::esc_table(MW_Audit_DB::t_inventory());
+    if ($inv === ''){
+      wp_die(esc_html__('Inventory table missing.','merchant-wiki-audit'));
+    }
+    $now = current_time('mysql');
+    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+    $ok = MW_Audit_DB::query_sql(
+      "INSERT INTO {$inv} (norm_url, obj_type, obj_id, slug, created_at) VALUES (%s,%s,%d,%s,%s)",
+      [home_url('/'), 'selftest', 0, '', $now]
+    );
+    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+    $cnt = (int) MW_Audit_DB::get_var_sql("SELECT COUNT(*) FROM {$inv}");
+    $err = MW_Audit_DB::last_error() ?: 'n/a';
+    $message = sprintf(
+      'SelfTest: insert=%s | count=%d | last_error=%s',
+      $ok !== false ? 'OK' : 'FAIL',
+      $cnt,
+      $err
+    );
+    wp_die(esc_html($message));
   }
 
   static function action_toggle_dropdb(){
-    if (!current_user_can('manage_options')) wp_die(__('Not allowed','merchant-wiki-audit'));
+    self::ensure_manage_capability();
     check_admin_referer('mw_audit_toggle_dropdb');
     $cur = get_option('mw_audit_drop_on_uninstall')==='yes' ? 'yes' : 'no';
     $new = ($cur==='yes') ? 'no' : 'yes';
     update_option('mw_audit_drop_on_uninstall', $new==='yes'?'yes':'no', false);
-    wp_safe_redirect( admin_url('admin.php?page=mw-site-index-audit&dropdb='.$new) ); exit;
+    self::safe_redirect( admin_url('admin.php?page=mw-site-index-audit&dropdb='.$new) );
   }
 
   static function action_save_pc_tax(){
-    if (!current_user_can('manage_options')) wp_die(__('Not allowed','merchant-wiki-audit'));
+    self::ensure_manage_capability();
     check_admin_referer('mw_audit_pc_tax', 'mw_audit_pc_tax_nonce');
     $available = self::get_available_pc_taxonomies();
-    $tax_raw = self::post_raw_value('pc_taxonomy');
-    $tax = $tax_raw ? sanitize_key($tax_raw) : '';
+    $tax_raw = self::get_post_value('pc_taxonomy', '');
+    $tax = $tax_raw !== '' ? sanitize_key((string) $tax_raw) : '';
     if ($tax && isset($available[$tax]) && taxonomy_exists($tax)){
       update_option('mw_audit_pc_taxonomy', $tax, false);
     } else {
       delete_option('mw_audit_pc_taxonomy');
     }
-    wp_safe_redirect( admin_url('admin.php?page=mw-site-index-audit&pc_tax='.$tax) ); exit;
+    self::safe_redirect( admin_url('admin.php?page=mw-site-index-audit&pc_tax='.$tax) );
   }
 
   static function action_save_settings(){
-    if (!current_user_can('manage_options')) wp_die(__('Not allowed','merchant-wiki-audit'));
-    $nonce_field = self::post_raw_value('mw_audit_save_settings_nonce_alt') ? 'mw_audit_save_settings_nonce_alt' : 'mw_audit_save_settings_nonce';
+    self::ensure_manage_capability();
+    $nonce_field = self::get_post_value('mw_audit_save_settings_nonce_alt', null) !== null ? 'mw_audit_save_settings_nonce_alt' : 'mw_audit_save_settings_nonce';
     check_admin_referer('mw_audit_save_settings', $nonce_field);
     $settings = MW_Audit_DB::get_settings();
-    $timeout_head_raw = self::post_raw_value('timeout_head');
-    $timeout_head = is_numeric($timeout_head_raw) ? (int) $timeout_head_raw : $settings['timeouts']['head'];
-    $timeout_get_raw  = self::post_raw_value('timeout_get');
-    $timeout_get  = is_numeric($timeout_get_raw) ? (int) $timeout_get_raw : $settings['timeouts']['get'];
+    $timeout_head = absint(self::get_post_value('timeout_head', $settings['timeouts']['head']));
+    $timeout_get  = absint(self::get_post_value('timeout_get', $settings['timeouts']['get']));
     $settings['timeouts']['head'] = max(1, $timeout_head);
     $settings['timeouts']['get']  = max(1, $timeout_get);
-    $profile_raw = self::post_raw_value('profile_defaults');
-    $profile = $profile_raw ? sanitize_key($profile_raw) : $settings['profile_defaults'];
+    $profile_raw = self::get_post_value('profile_defaults', $settings['profile_defaults']);
+    $profile = sanitize_key((string) $profile_raw);
     if (!in_array($profile, ['fast','standard','safe'], true)) {
       $profile = 'standard';
     }
     $settings['profile_defaults'] = $profile;
-    $export_raw = self::post_raw_value('ttl_export');
-    $export_ttl = is_numeric($export_raw) ? (int) $export_raw : $settings['ttl']['export_hours'];
-    $api_ttl_raw = self::post_raw_value('ttl_api');
-    $api_ttl_input = is_numeric($api_ttl_raw) ? (int) $api_ttl_raw : $settings['ttl']['api_hours'];
+    $export_ttl = absint(self::get_post_value('ttl_export', $settings['ttl']['export_hours']));
+    $api_ttl_input = absint(self::get_post_value('ttl_api', $settings['ttl']['api_hours']));
     $settings['ttl']['export_hours'] = max(1, $export_ttl);
     $api_ttl = max(1, $api_ttl_input);
     $settings['ttl']['api_hours'] = $api_ttl;
-    $import_mode_raw = self::post_raw_value('gsc_import_mode');
-    $import_mode = $import_mode_raw ? sanitize_key($import_mode_raw) : $settings['gsc_import_mode'];
+    $import_mode_raw = self::get_post_value('gsc_import_mode', $settings['gsc_import_mode']);
+    $import_mode = sanitize_key((string) $import_mode_raw);
     if (!in_array($import_mode, ['csv','sheets'], true)) {
       $import_mode = 'csv';
     }
     $settings['gsc_import_mode'] = $import_mode;
-    $settings['gsc_api_enabled'] = (bool) self::post_raw_value('gsc_api_enabled');
-    $settings['gdrive_export_enabled'] = (bool) self::post_raw_value('gdrive_export_enabled');
+    $settings['gsc_api_enabled'] = self::read_bool_param('gsc_api_enabled', !empty($settings['gsc_api_enabled']));
+    $settings['gdrive_export_enabled'] = self::read_bool_param('gdrive_export_enabled', !empty($settings['gdrive_export_enabled']));
     MW_Audit_DB::update_settings($settings);
     MW_Audit_GSC::save_ttl_hours($api_ttl);
-    wp_safe_redirect( add_query_arg('settings_saved', 1, admin_url('admin.php?page=mw-site-index-settings')) ); exit;
+    self::safe_redirect( add_query_arg('settings_saved', 1, admin_url('admin.php?page=mw-site-index-settings')) );
   }
 
   static function action_save_gsc_credentials(){
-    if (!current_user_can('manage_options')) wp_die(__('Not allowed','merchant-wiki-audit'));
+    self::ensure_manage_capability();
     check_admin_referer('mw_audit_gsc_credentials');
-    $client_id_raw = self::post_raw_value('gsc_client_id');
-    $client_id = $client_id_raw ? sanitize_text_field($client_id_raw) : '';
-    $client_secret_raw = self::post_raw_value('gsc_client_secret');
-    $client_secret = $client_secret_raw ? sanitize_text_field($client_secret_raw) : '';
+    $client_id = sanitize_text_field((string) self::get_post_value('gsc_client_id', ''));
+    $client_secret = sanitize_text_field((string) self::get_post_value('gsc_client_secret', ''));
     $prev_id = MW_Audit_GSC::get_client_id();
     $prev_secret = MW_Audit_GSC::get_client_secret();
     MW_Audit_GSC::save_credentials($client_id, $client_secret);
@@ -468,35 +586,35 @@ class MW_Audit_Inventory {
       MW_Audit_GSC::disconnect();
       MW_Audit_GSC::save_property('');
     }
-    wp_safe_redirect( admin_url('admin.php?page=mw-site-index-audit&gsc_saved=1') ); exit;
+    self::safe_redirect( admin_url('admin.php?page=mw-site-index-audit&gsc_saved=1') );
   }
 
   static function action_save_gsc_property(){
-    if (!current_user_can('manage_options')) wp_die(__('Not allowed','merchant-wiki-audit'));
+    self::ensure_manage_capability();
     check_admin_referer('mw_audit_gsc_property');
     $property = '';
-    $manual_property = self::post_raw_value('gsc_property_manual');
-    $select_property = self::post_raw_value('gsc_property_select');
-    if (!empty($manual_property)){
-      $property = esc_url_raw(trim($manual_property));
-    } elseif (!empty($select_property)){
-      $property = esc_url_raw(trim($select_property));
+    $manual_property = trim((string) self::get_post_value('gsc_property_manual', ''));
+    $select_property = trim((string) self::get_post_value('gsc_property_select', ''));
+    if ($manual_property !== ''){
+      $property = esc_url_raw($manual_property);
+    } elseif ($select_property !== ''){
+      $property = esc_url_raw($select_property);
     }
     MW_Audit_GSC::save_property($property);
-    wp_safe_redirect( admin_url('admin.php?page=mw-site-index-audit&gsc_property=1') ); exit;
+    self::safe_redirect( admin_url('admin.php?page=mw-site-index-audit&gsc_property=1') );
   }
 
   static function action_disconnect_gsc(){
-    if (!current_user_can('manage_options')) wp_die(__('Not allowed','merchant-wiki-audit'));
+    self::ensure_manage_capability();
     check_admin_referer('mw_audit_gsc_disconnect');
     MW_Audit_GSC::disconnect();
-    wp_safe_redirect( admin_url('admin.php?page=mw-site-index-audit&gsc_disconnected=1') ); exit;
+    self::safe_redirect( admin_url('admin.php?page=mw-site-index-audit&gsc_disconnected=1') );
   }
 
   static function action_gsc_callback(){
-    if (!current_user_can('manage_options')) wp_die(__('Not allowed','merchant-wiki-audit'));
+    self::ensure_manage_capability();
     MW_Audit_GSC::handle_oauth_callback();
-    wp_safe_redirect( admin_url('admin.php?page=mw-site-index-audit&gsc_connected=1') ); exit;
+    self::safe_redirect( admin_url('admin.php?page=mw-site-index-audit&gsc_connected=1') );
   }
 
   // Inventory build
@@ -577,14 +695,16 @@ class MW_Audit_Inventory {
     }
 
     if (isset($q['urls']) && is_array($q['urls'])){
-      global $wpdb;
       $urls = $q['urls'];
       $index = isset($q['i']) ? (int) $q['i'] : 0;
       $last_url = ($index > 0 && isset($urls[$index - 1])) ? $urls[$index - 1] : null;
       $last_id = 0;
       if ($last_url){
-        $inv = MW_Audit_DB::t_inventory();
-        $last_id = (int) $wpdb->get_var($wpdb->prepare("SELECT id FROM $inv WHERE norm_url=%s LIMIT 1", $last_url));
+        $inv = MW_Audit_DB::esc_table(MW_Audit_DB::t_inventory());
+        if ($inv){
+          // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+          $last_id = (int) MW_Audit_DB::get_var_sql("SELECT id FROM {$inv} WHERE norm_url=%s LIMIT 1", [$last_url]);
+        }
       }
       $q = [
         'last_id' => $last_id,
@@ -1007,14 +1127,16 @@ class MW_Audit_Inventory {
       wp_send_json_error(['msg'=>__('Queue not found','merchant-wiki-audit')]);
     }
     if (isset($q['urls']) && is_array($q['urls'])){
-      global $wpdb;
       $urls = $q['urls'];
       $index = isset($q['i']) ? (int) $q['i'] : 0;
       $last_url = ($index > 0 && isset($urls[$index - 1])) ? $urls[$index - 1] : null;
       $last_id = 0;
       if ($last_url){
-        $inv = MW_Audit_DB::t_inventory();
-        $last_id = (int) $wpdb->get_var($wpdb->prepare("SELECT id FROM $inv WHERE norm_url=%s LIMIT 1", $last_url));
+        $inv = MW_Audit_DB::esc_table(MW_Audit_DB::t_inventory());
+        if ($inv){
+          // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+          $last_id = (int) MW_Audit_DB::get_var_sql("SELECT id FROM {$inv} WHERE norm_url=%s LIMIT 1", [$last_url]);
+        }
       }
       $q = [
         'last_id' => $last_id,
@@ -1430,8 +1552,7 @@ class MW_Audit_Inventory {
   static function ajax_gsc_save_ttl(){
     check_ajax_referer('mw_gsc_save_ttl','nonce');
     if (!current_user_can('manage_options')) wp_send_json_error(['msg'=>__('Not allowed','merchant-wiki-audit')]);
-    $ttl_raw = self::post_raw_value('ttl');
-    $ttl = is_numeric($ttl_raw) ? (int) $ttl_raw : MW_Audit_GSC::get_ttl_hours();
+    $ttl = absint(self::get_post_value('ttl', MW_Audit_GSC::get_ttl_hours()));
     MW_Audit_GSC::save_ttl_hours($ttl);
     wp_send_json_success(['ttl'=>MW_Audit_GSC::get_ttl_hours()]);
   }
@@ -1445,10 +1566,8 @@ class MW_Audit_Inventory {
     if (!MW_Audit_GSC::has_sheets_scope()){
       wp_send_json_error(['msg'=>__('Google Sheets access is not authorized. Use "Connect Sheets" first.','merchant-wiki-audit')]);
     }
-    $sheet_input_raw = self::post_raw_value('sheet');
-    $sheet_input = $sheet_input_raw ? sanitize_text_field($sheet_input_raw) : '';
-    $range_input_raw = self::post_raw_value('range');
-    $range_input = $range_input_raw ? sanitize_text_field($range_input_raw) : '';
+    $sheet_input = sanitize_text_field((string) self::get_post_value('sheet', ''));
+    $range_input = sanitize_text_field((string) self::get_post_value('range', ''));
     $override = self::read_bool_param('override');
     list($sheet_id, $sheet_range) = MW_Audit_GSC::normalize_sheet_reference($sheet_input, $range_input);
     if ($sheet_id === ''){
@@ -1481,9 +1600,8 @@ class MW_Audit_Inventory {
     if (!MW_Audit_GSC::has_sheets_scope()){
       wp_send_json_error(['msg'=>__('Google Sheets access is not authorized. Use "Connect Sheets" first.','merchant-wiki-audit')]);
     }
-    $sources_raw = self::post_raw_value('sources');
-    $raw_sources = is_string($sources_raw) ? $sources_raw : '';
-    $list = array_filter(array_map('trim', preg_split('/[\r\n]+/', $raw_sources)));
+    $raw = sanitize_textarea_field((string) self::get_post_value('sources', ''));
+    $list = array_filter(array_map('trim', preg_split('/[\r\n]+/', $raw)));
     if (!$list){
       wp_send_json_error(['msg'=>__('Enter Google Sheet URL or ID','merchant-wiki-audit')]);
     }
@@ -1500,7 +1618,7 @@ class MW_Audit_Inventory {
   }
 
   static function action_gsc_import_pi_csv(){
-    if (!current_user_can('manage_options')) wp_die(__('Not allowed','merchant-wiki-audit'));
+    self::ensure_manage_capability();
     check_admin_referer('mw_gsc_import_pi_csv');
 
     $table_field = 'mw_gsc_pi_table';
@@ -1509,12 +1627,11 @@ class MW_Audit_Inventory {
       $table_field = 'mw_gsc_pi_csv';
     }
     if (empty($_FILES[$table_field]) || !is_array($_FILES[$table_field])){
-      wp_safe_redirect(add_query_arg([
-        'page' => 'mw-site-index-audit',
+      self::safe_redirect(add_query_arg([
+        'page' => 'mw-site-index-operations',
         'gsc_pi_import' => 'error',
         'msg' => rawurlencode(__('No file uploaded.','merchant-wiki-audit')),
       ], admin_url('admin.php')).'#mw-gsc-import');
-      exit;
     }
 
     MW_Audit_DB::set_flag('pi','running');
@@ -1522,12 +1639,11 @@ class MW_Audit_Inventory {
     $upload = wp_handle_upload($_FILES[$table_field], ['test_form' => false]);
     if (isset($upload['error'])){
       MW_Audit_DB::set_flag('pi','fail');
-      wp_safe_redirect(add_query_arg([
-        'page' => 'mw-site-index-audit',
+      self::safe_redirect(add_query_arg([
+        'page' => 'mw-site-index-operations',
         'gsc_pi_import' => 'error',
         'msg' => rawurlencode($upload['error']),
       ], admin_url('admin.php')).'#mw-gsc-import');
-      exit;
     }
 
     $file_path = $upload['file'];
@@ -1537,84 +1653,69 @@ class MW_Audit_Inventory {
     if (!empty($_FILES[$meta_field]) && is_array($_FILES[$meta_field]) && !empty($_FILES[$meta_field]['name'])){
       $meta_upload = wp_handle_upload($_FILES[$meta_field], ['test_form' => false]);
       if (isset($meta_upload['error'])){
-        if (!empty($file_path)) {
-          wp_delete_file($file_path);
-        }
+        self::delete_file_if_exists($file_path);
         MW_Audit_DB::set_flag('pi','fail');
-        wp_safe_redirect(add_query_arg([
-          'page' => 'mw-site-index-audit',
+        self::safe_redirect(add_query_arg([
+          'page' => 'mw-site-index-operations',
           'gsc_pi_import' => 'error',
           'msg' => rawurlencode($meta_upload['error']),
         ], admin_url('admin.php')).'#mw-gsc-import');
-        exit;
       }
       $meta_data = MW_Audit_GSC::parse_page_indexing_metadata_csv($meta_upload['file']);
       if (is_wp_error($meta_data)){
-        if (!empty($file_path)) {
-          wp_delete_file($file_path);
-        }
-        if (!empty($meta_upload['file'])) {
-          wp_delete_file($meta_upload['file']);
-        }
+        self::delete_file_if_exists($file_path);
+        self::delete_file_if_exists($meta_upload['file']);
         MW_Audit_DB::set_flag('pi','fail');
-        wp_safe_redirect(add_query_arg([
-          'page' => 'mw-site-index-audit',
+        self::safe_redirect(add_query_arg([
+          'page' => 'mw-site-index-operations',
           'gsc_pi_import' => 'error',
           'msg' => rawurlencode($meta_data->get_error_message()),
         ], admin_url('admin.php')).'#mw-gsc-import');
-        exit;
       }
       $meta_hint = $meta_data;
     }
 
-    $override = (bool) self::post_raw_value('override');
+    $override = self::read_bool_param('override');
     $parsed = MW_Audit_GSC::parse_page_indexing_csv($file_path);
     if (is_wp_error($parsed)){
-      if (!empty($file_path)) {
-        wp_delete_file($file_path);
-      }
-      if ($meta_upload && !empty($meta_upload['file'])){
-        wp_delete_file($meta_upload['file']);
+      self::delete_file_if_exists($file_path);
+      if ($meta_upload){
+        self::delete_file_if_exists($meta_upload['file']);
       }
       MW_Audit_DB::set_flag('pi','fail');
-      wp_safe_redirect(add_query_arg([
-        'page' => 'mw-site-index-audit',
+      self::safe_redirect(add_query_arg([
+        'page' => 'mw-site-index-operations',
         'gsc_pi_import' => 'error',
         'msg' => rawurlencode($parsed->get_error_message()),
       ], admin_url('admin.php')).'#mw-gsc-import');
-      exit;
     }
 
     $import = MW_Audit_GSC::import_page_indexing_records($parsed['rows'], $parsed['mapping'], $override, $meta_hint);
-    if (!empty($file_path)) {
-      wp_delete_file($file_path);
-    }
-    if ($meta_upload && !empty($meta_upload['file'])){
-      wp_delete_file($meta_upload['file']);
+    self::delete_file_if_exists($file_path);
+    if ($meta_upload){
+      self::delete_file_if_exists($meta_upload['file']);
     }
     if (is_wp_error($import)){
       MW_Audit_DB::set_flag('pi','fail');
-      wp_safe_redirect(add_query_arg([
-        'page' => 'mw-site-index-audit',
+      self::safe_redirect(add_query_arg([
+        'page' => 'mw-site-index-operations',
         'gsc_pi_import' => 'error',
         'msg' => rawurlencode($import->get_error_message()),
       ], admin_url('admin.php')).'#mw-gsc-import');
-      exit;
     }
 
     MW_Audit_DB::set_flag('pi','done');
 
-    wp_safe_redirect(add_query_arg([
-      'page'     => 'mw-site-index-audit',
+    self::safe_redirect(add_query_arg([
+      'page'     => 'mw-site-index-operations',
       'gsc_pi_import' => 'success',
       'imported' => (int)($import['imported'] ?? 0),
       'skipped'  => (int)($import['skipped'] ?? 0),
     ], admin_url('admin.php')).'#mw-gsc-import');
-    exit;
   }
 
   static function action_gsc_export_likely_not_indexed_csv(){
-    if (!current_user_can('manage_options')) wp_die(__('Not allowed','merchant-wiki-audit'));
+    self::ensure_manage_capability();
     check_admin_referer('mw_gsc_export_likely_not_indexed_csv');
     $states = MW_Audit_GSC::get_likely_not_indexed_reasons();
     $rows = MW_Audit_DB::get_likely_not_indexed_urls($states);
@@ -1642,8 +1743,8 @@ class MW_Audit_Inventory {
     if (!current_user_can('manage_options')){
       wp_send_json_error(['msg'=>__('Not allowed.','merchant-wiki-audit')], 403);
     }
-    $url_raw = self::post_raw_value('url');
-    $url = $url_raw ? esc_url_raw(trim($url_raw)) : '';
+    $url_raw = self::get_post_value('url', '');
+    $url = esc_url_raw(trim((string) $url_raw));
     if ($url === ''){
       wp_send_json_error(['msg'=>__('Enter a URL first.','merchant-wiki-audit')]);
     }
@@ -1719,9 +1820,8 @@ class MW_Audit_Inventory {
     if (!current_user_can('manage_options')){
       wp_send_json_error(['msg'=>__('Not allowed.','merchant-wiki-audit')], 403);
     }
-    $criteria_raw = self::post_raw_value('criteria');
-    $raw = is_string($criteria_raw) ? $criteria_raw : '';
-    $decoded = $raw !== '' ? json_decode($raw, true) : null;
+    $raw = self::read_raw_post_string('criteria');
+    $decoded = is_string($raw) && $raw !== '' ? json_decode($raw, true) : null;
     if (!is_array($decoded)){
       wp_send_json_error(['msg'=>__('Invalid request payload.','merchant-wiki-audit')]);
     }
@@ -1744,16 +1844,13 @@ class MW_Audit_Inventory {
     check_ajax_referer('mw_audit_priority_list','nonce');
     if (!current_user_can('manage_options')) wp_send_json_error(['msg'=>__('Not allowed','merchant-wiki-audit')]);
     $threshold = self::read_priority_threshold();
-    $page_raw = self::post_raw_value('paged');
-    $page = is_numeric($page_raw) ? max(1, (int) $page_raw) : 1;
-    $per_page_raw = self::post_raw_value('per_page');
-    $per_page = is_numeric($per_page_raw) ? (int) $per_page_raw : 20;
+    $page = max(1, absint(self::get_post_value('paged', 1)));
+    $per_page = absint(self::get_post_value('per_page', 20));
     $per_page = max(1, min(100, $per_page));
     $offset = ($page - 1) * $per_page;
-    $orderby_raw = self::post_raw_value('orderby');
-    $orderby = $orderby_raw ? sanitize_key($orderby_raw) : 'inbound_links';
-    $order_raw = self::post_raw_value('order');
-    $order = ($order_raw && strtoupper($order_raw) === 'DESC') ? 'DESC' : 'ASC';
+    $orderby = sanitize_key((string) self::get_post_value('orderby', 'inbound_links'));
+    $order_raw = strtoupper(trim((string) self::get_post_value('order', 'ASC')));
+    $order = $order_raw === 'DESC' ? 'DESC' : 'ASC';
 
     $rows = MW_Audit_DB::get_priority_ready_rows($threshold, $per_page, $offset, $orderby, $order);
     $total = MW_Audit_DB::count_priority_ready($threshold);
@@ -1770,7 +1867,7 @@ class MW_Audit_Inventory {
   }
 
   static function action_priority_export(){
-    if (!current_user_can('manage_options')) wp_die(__('Not allowed','merchant-wiki-audit'));
+    self::ensure_manage_capability();
     check_admin_referer('mw_audit_priority_export');
     $threshold = self::read_priority_threshold();
     nocache_headers();
@@ -1778,9 +1875,9 @@ class MW_Audit_Inventory {
     header('Content-Disposition: attachment; filename="mw-priority-ready.csv"');
     $out = fopen('php://output', 'w');
     if (!$out){
-      wp_die(__('Unable to open output stream.','merchant-wiki-audit'));
+      wp_die(esc_html__('Unable to open output stream.','merchant-wiki-audit'));
     }
-    @set_time_limit(0);
+    self::extend_time_limit(0);
     fputcsv($out, [
       'URL',
       'Inbound links',
@@ -1812,24 +1909,23 @@ class MW_Audit_Inventory {
   }
 
   static function action_similar_export(){
-    if (!current_user_can('manage_options')) wp_die(__('Not allowed','merchant-wiki-audit'));
+    self::ensure_manage_capability();
     check_admin_referer('mw_audit_similar_export', 'mw_audit_similar_export_nonce');
-    $criteria_raw = self::post_raw_value('criteria');
-    $raw = is_string($criteria_raw) ? $criteria_raw : '';
-    $decoded = $raw !== '' ? json_decode($raw, true) : null;
+    $raw = self::read_raw_post_string('criteria');
+    $decoded = is_string($raw) && $raw !== '' ? json_decode($raw, true) : null;
     if (!is_array($decoded) || empty($decoded['criteria'])){
-      wp_die(__('Invalid export request. Refresh the page and try again.','merchant-wiki-audit'));
+      wp_die(esc_html__('Invalid export request. Refresh the page and try again.','merchant-wiki-audit'));
     }
     $query = self::normalize_similar_query((array) $decoded['criteria']);
     if (is_wp_error($query)){
-      wp_die($query->get_error_message());
+      wp_die(esc_html($query->get_error_message()));
     }
     nocache_headers();
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="mw-find-similar.csv"');
     $out = fopen('php://output', 'w');
     if (!$out){
-      wp_die(__('Unable to open output stream.','merchant-wiki-audit'));
+      wp_die(esc_html__('Unable to open output stream.','merchant-wiki-audit'));
     }
     fputcsv($out, [
       'URL',

@@ -98,54 +98,72 @@ function mw_audit_stat_class($flag) {
 	return '';
 }
 
+/**
+ * Safely fetches a query argument without direct access to $_GET.
+ *
+ * @param string $key     Query arg key.
+ * @param mixed  $default Default value when key missing.
+ * @return mixed
+ */
+function mw_audit_get_query_arg($key, $default = '') {
+	$value = filter_input(INPUT_GET, $key, FILTER_UNSAFE_RAW, FILTER_NULL_ON_FAILURE);
+	if ($value === null || is_array($value)) {
+		return $default;
+	}
+	return $value;
+}
+
+/**
+ * True when a query arg is set (even if empty string).
+ *
+ * @param string $key Query arg key.
+ * @return bool
+ */
+function mw_audit_has_query_arg($key) {
+	$value = filter_input(INPUT_GET, $key, FILTER_UNSAFE_RAW, FILTER_NULL_ON_FAILURE);
+	return $value !== null;
+}
+
+/**
+ * Returns a sanitized integer query arg.
+ *
+ * @param string $key     Query arg key.
+ * @param int    $default Default integer value.
+ * @return int
+ */
+function mw_audit_get_query_int($key, $default = 0) {
+	$value = filter_input(INPUT_GET, $key, FILTER_SANITIZE_NUMBER_INT, FILTER_NULL_ON_FAILURE);
+	if ($value === null || $value === '') {
+		return (int) $default;
+	}
+	return (int) $value;
+}
+
+/**
+ * Returns a boolean interpretation of query arg presence/value.
+ *
+ * @param string $key Query arg key.
+ * @return bool
+ */
+function mw_audit_get_query_bool($key) {
+	$value = filter_input(INPUT_GET, $key, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+	if ($value === null) {
+		return mw_audit_has_query_arg($key);
+	}
+	return (bool) $value;
+}
+
 function mw_audit_render_dashboard() { mw_audit_render_page('dashboard'); }
 function mw_audit_render_operations() { mw_audit_render_page('operations'); }
 function mw_audit_render_reports() { mw_audit_render_page('reports'); }
 function mw_audit_render_settings() { mw_audit_render_page('settings'); }
 function mw_audit_render_admin() { mw_audit_render_page('dashboard'); }
 
-/**
- * Helpers for sanitized query vars.
- */
-function mw_audit_get_query_key($key, $default = '') {
-	if (!isset($_GET[$key])) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-		return $default;
-	}
-	return sanitize_key(wp_unslash($_GET[$key])); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-}
-
-function mw_audit_get_query_text($key, $default = '') {
-	if (!isset($_GET[$key])) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-		return $default;
-	}
-	return sanitize_text_field(wp_unslash($_GET[$key])); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-}
-
-function mw_audit_get_query_absint($key, $default = 0) {
-	if (!isset($_GET[$key])) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-		return $default;
-	}
-	return absint(wp_unslash($_GET[$key])); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-}
-
-function mw_audit_get_query_bool($key) {
-	if (!isset($_GET[$key])) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-		return false;
-	}
-	$value = wp_unslash($_GET[$key]); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-	if (is_string($value)) {
-		$value = strtolower($value);
-		return in_array($value, array('1', 'true', 'yes', 'on'), true);
-	}
-	return (bool) $value;
-}
-
 function mw_audit_render_page($view = 'dashboard') {
 	if (!current_user_can('manage_options')) {
 		wp_die(esc_html__('Not allowed', 'merchant-wiki-audit'));
 	}
-	$page_raw = mw_audit_get_query_key('page');
-	$current_page_slug = $page_raw ? $page_raw : 'mw-site-index-audit';
+	$current_page_slug = sanitize_key(mw_audit_get_query_arg('page', 'mw-site-index-audit'));
 
 	// Health (safe)
 	$h = (class_exists('MW_Audit_Health') && is_callable(array('MW_Audit_Health','get')))
@@ -153,9 +171,8 @@ function mw_audit_render_page($view = 'dashboard') {
 		: mw_audit_empty_health();
 
 	// Sorting
-	$order_raw = mw_audit_get_query_key('order');
-	$order = $order_raw ? $order_raw : 'norm_url';
-	$dir_raw = strtoupper(mw_audit_get_query_key('dir'));
+	$order = sanitize_key(mw_audit_get_query_arg('order', 'norm_url'));
+	$dir_raw = strtoupper(sanitize_text_field(mw_audit_get_query_arg('dir', 'ASC')));
 	$dir   = ($dir_raw === 'DESC') ? 'DESC' : 'ASC';
 	$toggle_dir = ($dir === 'ASC') ? 'DESC' : 'ASC';
 
@@ -251,26 +268,22 @@ function mw_audit_render_page($view = 'dashboard') {
 			</p>
 		</div>
 	<?php
-		if (mw_audit_get_query_bool('settings_saved')) {
+		if (mw_audit_has_query_arg('settings_saved')) {
 			printf('<div class="notice notice-success is-dismissible"><p>%s</p></div>', esc_html__('Settings saved.', 'merchant-wiki-audit'));
 		}
-		$gsc_pi_import = mw_audit_get_query_key('gsc_pi_import', null);
-		if ($gsc_pi_import !== null && $gsc_pi_import !== '') {
-			$type = $gsc_pi_import;
-			$msg_raw = mw_audit_get_query_text('msg', '');
-			$import_msg = $msg_raw ? $msg_raw : '';
+		if (mw_audit_has_query_arg('gsc_pi_import')) {
+			$type = sanitize_key(mw_audit_get_query_arg('gsc_pi_import'));
+			$import_msg = sanitize_text_field(mw_audit_get_query_arg('msg', ''));
 			if ($type === 'success') {
-					$imported = mw_audit_get_query_absint('imported');
-					$skipped  = mw_audit_get_query_absint('skipped');
-					printf(
-						'<div class="notice notice-success is-dismissible"><p>%s</p></div>',
-						esc_html(sprintf(
-						/* translators: 1: number of imported rows, 2: number of skipped rows */
-						__('Page indexing import completed: %1$d imported, %2$d skipped.','merchant-wiki-audit'),
+				$imported = absint(mw_audit_get_query_int('imported', 0));
+				$skipped  = absint(mw_audit_get_query_int('skipped', 0));
+					$message = sprintf(
+						/* translators: 1: number of imported rows, 2: number of skipped rows. */
+						esc_html__('Page indexing import completed: %1$d imported, %2$d skipped.', 'merchant-wiki-audit'),
 						$imported,
 						$skipped
-					))
-				);
+					);
+					printf('<div class="notice notice-success is-dismissible"><p>%s</p></div>', esc_html($message));
 			} elseif ($type === 'error' && $import_msg) {
 				printf(
 					'<div class="notice notice-error"><p>%s</p></div>',
@@ -278,33 +291,69 @@ function mw_audit_render_page($view = 'dashboard') {
 				);
 			}
 		}
-		$snapshot_created = mw_audit_get_query_text('mw_snapshot_created', '');
-		if ($snapshot_created !== '') {
-			$label = $snapshot_created;
-			$rows  = mw_audit_get_query_absint('mw_snapshot_rows');
-		if ($rows) {
-			$message = sprintf(
-				/* translators: 1: snapshot label, 2: number of rows */
-				__('Snapshot “%1$s” saved (%2$d rows).','merchant-wiki-audit'),
-				$label,
-				$rows
-			);
-		} else {
-				$message = sprintf(
-					/* translators: %s: snapshot label */
-					__('Snapshot “%1$s” saved.','merchant-wiki-audit'),
+		if (mw_audit_has_query_arg('mw_snapshot_created')) {
+			$label = sanitize_text_field(mw_audit_get_query_arg('mw_snapshot_created', ''));
+			$snapshot_rows  = absint(mw_audit_get_query_int('mw_snapshot_rows', 0));
+			$snapshot_message = $snapshot_rows
+				? sprintf(
+					/* translators: 1: snapshot label, 2: number of exported rows. */
+					esc_html__('Snapshot “%1$s” saved (%2$d rows).', 'merchant-wiki-audit'),
+					$label,
+					$snapshot_rows
+				)
+				: sprintf(
+					/* translators: %s: snapshot label. */
+					esc_html__('Snapshot “%s” saved.', 'merchant-wiki-audit'),
 					$label
 				);
+			$_snapshot_hint = __('Snapshots are CSV exports stored locally in wp-content/uploads/mw-audit. No screenshots are ever taken.', 'merchant-wiki-audit');
+			printf(
+				'<div class="notice notice-success is-dismissible"><p>%s %s</p></div>',
+				esc_html($snapshot_message),
+				wp_kses_post($_snapshot_hint)
+			);
 		}
-		printf('<div class="notice notice-success is-dismissible"><p>%s</p></div>', esc_html($message));
-	}
-		$snapshot_error = mw_audit_get_query_text('mw_snapshot_error', '');
-		if ($snapshot_error !== '') {
-			$err = $snapshot_error;
-		printf('<div class="notice notice-error"><p>%s</p></div>', esc_html($err));
-	}
+		if (mw_audit_has_query_arg('mw_snapshot_error')) {
+			$err = sanitize_text_field(mw_audit_get_query_arg('mw_snapshot_error', ''));
+			printf('<div class="notice notice-error"><p>%s</p></div>', esc_html($err));
+		}
 		?>
 		<h1><?php echo esc_html__('Merchant.WiKi — Site Index Audit', 'merchant-wiki-audit'); ?></h1>
+		<?php
+			$mw_audit_views = array(
+				'dashboard'  => array(
+					'label' => __('Dashboard', 'merchant-wiki-audit'),
+					'page'  => 'mw-site-index-audit',
+				),
+				'operations' => array(
+					'label' => __('Operations', 'merchant-wiki-audit'),
+					'page'  => 'mw-site-index-operations',
+				),
+				'reports'    => array(
+					'label' => __('Reports', 'merchant-wiki-audit'),
+					'page'  => 'mw-site-index-reports',
+				),
+				'settings'   => array(
+					'label' => __('Settings', 'merchant-wiki-audit'),
+					'page'  => 'mw-site-index-settings',
+				),
+			);
+			$current_view_label = $mw_audit_views[$view]['label'] ?? ucfirst($view);
+		?>
+		<div class="mw-section-header">
+			<h2 class="mw-section-title"><?php echo esc_html($current_view_label); ?></h2>
+			<div class="mw-section-nav" role="navigation" aria-label="<?php esc_attr_e('Sections', 'merchant-wiki-audit'); ?>">
+				<?php foreach ($mw_audit_views as $view_key => $view_meta): ?>
+					<?php
+						$page_slug = $view_meta['page'];
+						$url = admin_url('admin.php?page=' . $page_slug);
+						$is_current = ($view_key === $view);
+						$button_class = $is_current ? 'button button-primary' : 'button button-secondary';
+					?>
+					<a class="<?php echo esc_attr($button_class); ?>" href="<?php echo esc_url($url); ?>"><?php echo esc_html($view_meta['label']); ?></a>
+				<?php endforeach; ?>
+			</div>
+		</div>
 
 <?php if ($view === 'dashboard'): ?>
 	<div class="mw-grid">
@@ -448,34 +497,22 @@ function mw_audit_render_page($view = 'dashboard') {
 		$queue_eta = isset($gsc_metrics['eta_seconds']) ? (int) $gsc_metrics['eta_seconds'] : 0;
 		$format_eta = function($seconds) {
 			$seconds = (int) $seconds;
-			if ($seconds <= 0) return __('~0 min','merchant-wiki-audit');
+			if ($seconds <= 0) {
+				return __('~0 min','merchant-wiki-audit');
+			}
 			if ($seconds < 120) {
-				return sprintf(
-					/* translators: %d: number of seconds */
-					__('%d s','merchant-wiki-audit'),
-					$seconds
-				);
+				/* translators: %d: number of seconds remaining. */
+				return sprintf(__('%d s','merchant-wiki-audit'), $seconds);
 			}
 			if ($seconds < 7200) {
-				return sprintf(
-					/* translators: %d: number of minutes */
-					__('%d min','merchant-wiki-audit'),
-					round($seconds / 60)
-				);
+				/* translators: %d: number of minutes remaining. */
+				return sprintf(__('%d min','merchant-wiki-audit'), round($seconds / 60));
 			}
-			return sprintf(
-				/* translators: %d: number of hours */
-				__('%d h','merchant-wiki-audit'),
-				round($seconds / 3600)
-			);
+			/* translators: %d: number of hours remaining. */
+			return sprintf(__('%d h','merchant-wiki-audit'), round($seconds / 3600));
 		};
-		$queue_label = $queue_length
-			? sprintf(
-				/* translators: %d: number of pending URLs */
-				__('%d pending','merchant-wiki-audit'),
-				$queue_length
-			)
-			: __('Idle','merchant-wiki-audit');
+		/* translators: %d: number of URLs queued for Google Inspection. */
+		$queue_label = $queue_length ? sprintf(__('%d pending','merchant-wiki-audit'), $queue_length) : __('Idle','merchant-wiki-audit');
 		if ($queue_length && $queue_speed > 0) {
 			$queue_label .= sprintf(' · %.1f/min', $queue_speed);
 		}
@@ -523,7 +560,7 @@ function mw_audit_render_page($view = 'dashboard') {
 			<?php endif; ?>
 			<li title="<?php echo esc_attr__('URLs whose Inspection API TTL expired or was never fetched.','merchant-wiki-audit'); ?>">
 				<span><?php echo esc_html__('Stale URLs (Inspection)','merchant-wiki-audit'); ?></span>
-				<b class="pill <?php echo $gsc_stale_total ? 'warn' : 'ok'; ?>"><?php echo esc_html($gsc_stale_total); ?></b>
+				<b class="pill <?php echo esc_attr($gsc_stale_total ? 'warn' : 'ok'); ?>"><?php echo esc_html($gsc_stale_total); ?></b>
 			</li>
 			<li title="<?php echo esc_attr__('Pending URLs in the Inspection queue plus throughput/ETA.','merchant-wiki-audit'); ?>">
 				<span><?php echo esc_html__('Queue','merchant-wiki-audit'); ?></span>
@@ -535,11 +572,11 @@ function mw_audit_render_page($view = 'dashboard') {
 			</li>
 			<li title="<?php echo esc_attr__('Shows whether Google Sheets export credentials are active.','merchant-wiki-audit'); ?>">
 				<span><?php echo esc_html__('Sheets API','merchant-wiki-audit'); ?></span>
-				<b class="pill <?php echo $gsc_has_sheets ? 'ok' : 'warn'; ?>"><?php echo $gsc_has_sheets ? esc_html__('Enabled','merchant-wiki-audit') : esc_html__('Not connected','merchant-wiki-audit'); ?></b>
+				<b class="pill <?php echo esc_attr($gsc_has_sheets ? 'ok' : 'warn'); ?>"><?php echo $gsc_has_sheets ? esc_html__('Enabled','merchant-wiki-audit') : esc_html__('Not connected','merchant-wiki-audit'); ?></b>
 			</li>
 			<li title="<?php echo esc_attr__('Most recent Inspection API or queue error message.','merchant-wiki-audit'); ?>">
 				<span><?php echo esc_html__('Last error','merchant-wiki-audit'); ?></span>
-				<b class="pill <?php echo $last_error ? 'fail' : 'neutral'; ?>"><?php echo $last_error ? esc_html($last_error) : '—'; ?></b>
+				<b class="pill <?php echo esc_attr($last_error ? 'fail' : 'neutral'); ?>"><?php echo $last_error ? esc_html($last_error) : esc_html__('—','merchant-wiki-audit'); ?></b>
 			</li>
 		</ul>
 		<?php if (empty($settings['gsc_api_enabled'])): ?>
@@ -559,7 +596,7 @@ function mw_audit_render_page($view = 'dashboard') {
 		<div class="mw-kv">
 			<div style="margin-bottom:6px">
 				<span><?php echo esc_html__('Total','merchant-wiki-audit'); ?></span>
-						<b class="pill <?php echo !empty($s['ok']) ? 'ok':'fail'; ?>"><?php echo !empty($s['ok']) ? 'OK' : 'FAIL'; ?></b>
+						<b class="pill <?php echo esc_attr(!empty($s['ok']) ? 'ok' : 'fail'); ?>"><?php echo esc_html(!empty($s['ok']) ? __('OK','merchant-wiki-audit') : __('FAIL','merchant-wiki-audit')); ?></b>
 					</div>
 					<?php
 						$labels = array('inv'=>'Inventory','st'=>'Status','pc'=>'Post→Primary Category');
@@ -572,7 +609,7 @@ function mw_audit_render_page($view = 'dashboard') {
 							$can_write  = !empty($t['can_write']);
 							$ok_all = ($exists && $columns_ok && $indexes_ok && $can_select && $can_write);
 					?>
-					<details style="margin-top:6px" <?php echo $ok_all ? '' : 'open'; ?>>
+					<details style="margin-top:6px"<?php if (!$ok_all) { echo ' open'; } ?>>
 						<summary>
 							<b><?php echo esc_html($labels[$key] ?? $key); ?></b>
 							— <?php echo esc_html($t['table'] ?? ''); ?>
@@ -583,7 +620,11 @@ function mw_audit_render_page($view = 'dashboard') {
 							$bits[] = $indexes_ok  ? 'indexes✓' : 'indexes!';
 							$bits[] = $can_select  ? 'SELECT✓'  : 'SELECT!';
 							$bits[] = $can_write   ? 'WRITE✓'   : 'WRITE!';
-							echo ' <span class="'.($ok_all ? 'ok' : 'fail').'">['.esc_html(implode(', ', $bits)).']</span>';
+							printf(
+								' <span class="%s">[%s]</span>',
+								esc_attr($ok_all ? 'ok' : 'fail'),
+								esc_html(implode(', ', $bits))
+							);
 							?>
 						</summary>
 						<?php if (!empty($t['issues'])): ?>
@@ -794,24 +835,21 @@ function mw_audit_render_page($view = 'dashboard') {
 				</div>
 
 				<!-- Google index -->
-				<?php $gindex_enabled = (!empty($gsc['connected']) && !empty($gsc['property']) && !empty($settings['gsc_api_enabled'])); ?>
-				<div id="mw-gindex-progress" class="mw-box <?php echo esc_attr(mw_audit_stat_class($steps['gindex']['status'] ?? '')); ?>"
-					data-stale-total="<?php echo esc_attr($gsc_stale_total); ?>"
-					data-queued-total="<?php echo esc_attr($gsc_queue_candidates); ?>"
-					data-stale-remaining="<?php echo esc_attr($gsc_stale_after_hint); ?>">
+			<?php $gindex_enabled = (!empty($gsc['connected']) && !empty($gsc['property']) && !empty($settings['gsc_api_enabled'])); ?>
+			<div id="mw-gindex-progress" class="mw-box <?php echo esc_attr(mw_audit_stat_class($steps['gindex']['status'] ?? '')); ?>"
+				data-stale-total="<?php echo esc_attr($gsc_stale_total); ?>"
+				data-queued-total="<?php echo esc_attr($gsc_queue_candidates); ?>"
+				data-stale-remaining="<?php echo esc_attr($gsc_stale_after_hint); ?>">
 				<h3><?php echo esc_html__('Check Google Index Status','merchant-wiki-audit'); ?></h3>
-					<p class="mw-box-hint"><?php
-						$settings_link = esc_url(admin_url('admin.php?page=mw-site-index-settings#mw-gsc-settings'));
-						echo wp_kses_post(
-							sprintf(
-								/* translators: 1: explanatory text, 2: settings URL, 3: link label */
-								'%1$s <a href="%2$s">%3$s</a>',
-								esc_html__('Connect Google Search Console in Settings → Google Search Console to enable this block.','merchant-wiki-audit'),
-								$settings_link,
-								esc_html__('Open settings','merchant-wiki-audit')
-							)
-						);
-					?></p>
+				<p class="mw-box-hint"><?php
+					$settings_link = admin_url('admin.php?page=mw-site-index-settings#mw-gsc-settings');
+					printf(
+						'%s <a href="%s">%s</a>',
+						esc_html__('Connect Google Search Console in Settings → Google Search Console to enable this block.','merchant-wiki-audit'),
+						esc_url($settings_link),
+						esc_html__('Open settings','merchant-wiki-audit')
+					);
+				?></p>
 				<p class="mw-box-hint"><?php echo esc_html__('Fetches indexation status from Google Search Console (cached). Use to find "not indexed" pages.','merchant-wiki-audit'); ?></p>
 				<?php if (!$gindex_enabled): ?>
 					<p class="description" style="color:#d63638;"><?php
@@ -862,6 +900,107 @@ function mw_audit_render_page($view = 'dashboard') {
 				</div>
 
 		</div><!-- /.mw-actions -->
+		<span id="mw-gsc-import"></span>
+		<div class="mw-card mw-gsc-import-card">
+			<h3><?php echo esc_html__('Google Search Console Imports','merchant-wiki-audit'); ?></h3>
+			<p class="mw-box-hint">
+				<?php
+				printf(
+					/* translators: %s: Google Search Console Page Indexing link. */
+					esc_html__('Download the Page Indexing export directly from %s and upload Table.csv (plus Metadata.csv).','merchant-wiki-audit'),
+					sprintf(
+						'<a href="%s" target="_blank" rel="noreferrer noopener">%s</a>',
+						esc_url('https://search.google.com/search-console/index'),
+						esc_html__('Google Search Console → Page Indexing','merchant-wiki-audit')
+					)
+				);
+				?>
+			</p>
+			<?php
+				$gsc_import_mode = $settings['gsc_import_mode'] ?? 'csv';
+				$gsc_mode_is_sheets = ($gsc_import_mode === 'sheets');
+			?>
+			<div class="mw-gsc-mode-switch">
+				<form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" class="mw-gsc-mode-form">
+					<?php wp_nonce_field('mw_audit_save_settings', 'mw_audit_save_settings_nonce_alt'); ?>
+					<input type="hidden" name="action" value="mw_audit_save_settings">
+					<label>
+						<span><?php echo esc_html__('Choose how to import GSC data','merchant-wiki-audit'); ?></span>
+						<select id="mw-gsc-import-mode" name="gsc_import_mode">
+							<option value="csv" <?php selected($gsc_import_mode, 'csv'); ?>><?php echo esc_html__('Import GSC as CSV','merchant-wiki-audit'); ?></option>
+							<option value="sheets" <?php selected($gsc_import_mode, 'sheets'); ?>><?php echo esc_html__('Import via Google Sheet','merchant-wiki-audit'); ?></option>
+						</select>
+					</label>
+					<button class="button" type="submit"><?php echo esc_html__('Save preference','merchant-wiki-audit'); ?></button>
+				</form>
+				<p id="mw-gsc-sheets-warning" class="description <?php echo $gsc_mode_is_sheets ? '' : 'mw-hidden'; ?>"<?php echo $gsc_mode_is_sheets ? '' : ' hidden'; ?>>
+					<?php echo esc_html__('This is a complex integration that requires Google Cloud Console credentials and we do not recommend it unless you need automation.','merchant-wiki-audit'); ?>
+				</p>
+			</div>
+
+			<div class="mw-gsc-mode-section mw-gsc-mode-sheets <?php echo $gsc_mode_is_sheets ? '' : 'mw-hidden'; ?>"<?php echo $gsc_mode_is_sheets ? '' : ' hidden'; ?>>
+				<div class="mw-gsc-import-block">
+					<h4><?php echo esc_html__('Page Indexing Import','merchant-wiki-audit'); ?></h4>
+					<p class="mw-box-hint"><?php echo esc_html__('Imports "Page indexing" report from GSC to detect why pages are excluded from index.','merchant-wiki-audit'); ?></p>
+					<div class="mw-gsc-assemble">
+						<label style="display:block; margin-bottom:6px;">
+							<?php echo esc_html__('Google Sheets links (one per line)','merchant-wiki-audit'); ?>
+							<textarea id="mw-gsc-assemble-input" class="regular-text mw-card-field" rows="4" style="width:100%;max-width:100%;" placeholder="https://docs.google.com/spreadsheets/d/...\nhttps://docs.google.com/spreadsheets/d/...\n..."></textarea>
+						</label>
+						<button type="button" class="button" id="mw-gsc-assemble-button"><?php echo esc_html__('Assemble result sheet','merchant-wiki-audit'); ?></button>
+						<span id="mw-gsc-assemble-status" class="mw-inline-status" aria-live="polite"></span>
+					</div>
+					<?php if ($gsc_has_sheets): ?>
+						<div class="mw-gsc-sheets">
+							<label style="display:block; margin-bottom:6px;">
+								<?php echo esc_html__('Sheet URL or ID','merchant-wiki-audit'); ?>
+								<input type="text" id="mw-gsc-sheet-input" class="regular-text mw-card-field" style="width:100%;max-width:100%;" placeholder="https://docs.google.com/spreadsheets/d/...">
+							</label>
+							<label style="display:block; margin-bottom:6px;">
+								<?php echo esc_html__('Range (e.g. Page indexing!A:Z)','merchant-wiki-audit'); ?>
+								<input type="text" id="mw-gsc-sheet-range" class="regular-text mw-card-field" style="width:100%;max-width:100%;" value="A:Z">
+							</label>
+							<label style="display:block; margin-bottom:10px;">
+								<input type="checkbox" id="mw-gsc-sync-override" value="1">
+								<?php echo esc_html__('Allow Page indexing reasons to overwrite inspection coverage','merchant-wiki-audit'); ?>
+							</label>
+							<button type="button" class="button" id="mw-gsc-sync-button"><?php echo esc_html__('Sync Page indexing (Sheets)','merchant-wiki-audit'); ?></button>
+							<span id="mw-gsc-sync-status" class="mw-inline-status" aria-live="polite"></span>
+						</div>
+					<?php else: ?>
+						<p class="description"><?php echo esc_html__('Use the Connect Sheets button in the settings card to enable this mode.','merchant-wiki-audit'); ?></p>
+					<?php endif; ?>
+				</div>
+			</div>
+
+			<div class="mw-gsc-mode-section mw-gsc-mode-csv <?php echo $gsc_mode_is_sheets ? 'mw-hidden' : ''; ?>"<?php echo $gsc_mode_is_sheets ? ' hidden' : ''; ?>>
+				<div class="mw-gsc-import-block">
+					<h4><?php echo esc_html__('Page Indexing Import','merchant-wiki-audit'); ?></h4>
+					<p class="mw-box-hint"><?php echo esc_html__('Imports "Page indexing" report from GSC to detect why pages are excluded from index.','merchant-wiki-audit'); ?></p>
+					<form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" enctype="multipart/form-data" class="mw-gsc-import-csv">
+						<?php wp_nonce_field('mw_gsc_import_pi_csv'); ?>
+						<input type="hidden" name="action" value="mw_gsc_import_pi_csv">
+						<label style="display:block; margin-bottom:6px;">
+							<?php echo esc_html__('Table CSV (Table.csv)','merchant-wiki-audit'); ?>
+							<input type="file" name="mw_gsc_pi_table" accept=".csv" required>
+						</label>
+						<label style="display:block; margin-bottom:6px;">
+							<?php echo esc_html__('Metadata CSV (Metadata.csv, optional)','merchant-wiki-audit'); ?>
+							<input type="file" name="mw_gsc_pi_meta" accept=".csv">
+						</label>
+						<label style="display:block; margin-bottom:6px;">
+							<input type="checkbox" name="override" value="1">
+							<?php echo esc_html__('Allow Page indexing data to overwrite inspection coverage','merchant-wiki-audit'); ?>
+						</label>
+						<button class="button"><?php echo esc_html__('Import CSV','merchant-wiki-audit'); ?></button>
+					</form>
+				</div>
+			</div>
+
+			<p class="description" style="margin-top:10px;">
+				<?php echo esc_html__('Index coverage data comes from Google Search Console and may lag by a few days. Site ownership in GSC is required.','merchant-wiki-audit'); ?>
+			</p>
+		</div>
 	<?php endif; ?>
 	<?php if ($view === 'reports'): ?>
 		<?php
@@ -876,7 +1015,7 @@ function mw_audit_render_page($view = 'dashboard') {
 				'min_days_since_publish' => 120,
 				'post_types' => array('post','page'),
 			);
-				$refresh_mode = mw_audit_get_query_key('mw_refresh_mode', 'days365');
+			$refresh_mode = sanitize_key(mw_audit_get_query_arg('mw_refresh_mode', 'days365'));
 			$allowed_modes = array('days365','last_year','top5');
 			if (!in_array($refresh_mode, $allowed_modes, true)) {
 				$refresh_mode = 'days365';
@@ -885,7 +1024,7 @@ function mw_audit_render_page($view = 'dashboard') {
 			if (!is_array($refresh_feed_args)) {
 				$refresh_feed_args = $refresh_defaults;
 			}
-				$refresh_zero_only = mw_audit_get_query_bool('mw_refresh_zero_inbound');
+			$refresh_zero_only = mw_audit_get_query_bool('mw_refresh_zero_inbound');
 			if ($refresh_zero_only) {
 				$refresh_feed_args['only_zero_inbound'] = true;
 			}
@@ -1014,11 +1153,13 @@ function mw_audit_render_page($view = 'dashboard') {
 								<strong><?php echo esc_html($snap['label']); ?></strong>
 								<span><?php echo esc_html(mysql2date('Y-m-d H:i', $snap['created_at'])); ?></span>
 								<span>
-									<?php printf(
-										/* translators: %d: number of rows in the snapshot */
+									<?php
+									printf(
+										/* translators: %d: number of rows inside a snapshot export. */
 										esc_html__('Rows: %d','merchant-wiki-audit'),
 										(int) $snap['rows']
-									); ?>
+									);
+									?>
 								</span>
 								<?php if ($next_steps_snapshot_url && !empty($snap['filename'])): ?>
 									<a href="<?php echo esc_url($next_steps_snapshot_url.$snap['filename']); ?>" target="_blank" rel="noopener"><?php echo esc_html__('Download raw','merchant-wiki-audit'); ?></a>
@@ -1032,13 +1173,17 @@ function mw_audit_render_page($view = 'dashboard') {
 
 		<div class="mw-card mw-refresh-card" id="mw-refresh-card">
 			<h3><?php echo esc_html__('Stale content refresh','merchant-wiki-audit'); ?></h3>
-			<p class="mw-report-hint"><?php
-				printf(
-					/* translators: %d: minimum number of days since last update */
-					esc_html__('Shows published posts/pages that have not been updated for ≥%d days so you can refresh them before rankings slip.','merchant-wiki-audit'),
-					max(1, $refresh_min_days)
-				);
-			?></p>
+			<p class="mw-report-hint">
+				<?php
+					$refresh_stale_days = max(1, (int) $refresh_min_days);
+					$refresh_message = sprintf(
+						/* translators: %d: minimum number of days without updates before a page is considered stale. */
+						__('Shows published posts/pages that have not been updated for ≥%d days so you can refresh them before rankings slip.','merchant-wiki-audit'),
+						$refresh_stale_days
+					);
+					echo esc_html($refresh_message);
+				?>
+			</p>
 			<p class="mw-report-hint mw-gemini-reminder"><?php echo esc_html__('Use “Open Gemini” to copy the recommended brief, open Gemini in a new tab, and paste the current page content immediately.','merchant-wiki-audit'); ?></p>
 				<form method="get" action="<?php echo esc_url(admin_url('admin.php')); ?>" class="mw-refresh-filter">
 					<input type="hidden" name="page" value="<?php echo esc_attr($current_page_slug); ?>">
@@ -1093,7 +1238,7 @@ function mw_audit_render_page($view = 'dashboard') {
 									$days_since_update = isset($candidate['days_since_update']) ? (int) $candidate['days_since_update'] : null;
 									$days_label = $days_since_update !== null
 										? sprintf(
-											/* translators: %d: number of days since the page was updated */
+											/* translators: %d: number of days since the content was last updated. */
 											_n('%d day ago','%d days ago', $days_since_update, 'merchant-wiki-audit'),
 											$days_since_update
 										)
@@ -1416,58 +1561,37 @@ function mw_audit_render_page($view = 'dashboard') {
 						$label = $reason_label_text;
 					}
 					if ($coverage !== '') {
-						$parts[] = sprintf(
-							/* translators: %s: Google Search Console coverage label */
-							__('Coverage: %s','merchant-wiki-audit'),
-							$coverage
-						);
+						/* translators: %s: Google Search Console coverage message. */
+						$parts[] = sprintf(__('Coverage: %s','merchant-wiki-audit'), $coverage);
 					}
 					if ($reason_label_text !== '') {
-						$parts[] = sprintf(
-							/* translators: %s: Google Search Console reason code */
-							__('Reason code: %s','merchant-wiki-audit'),
-							$reason_label_text
-						);
+						/* translators: %s: Google reason code. */
+						$parts[] = sprintf(__('Reason code: %s','merchant-wiki-audit'), $reason_label_text);
 					}
 					if ($reason !== '') {
-						$parts[] = sprintf(
-							/* translators: %s: human readable reason */
-							__('Reason: %s','merchant-wiki-audit'),
-							$reason
-						);
+						/* translators: %s: Google reason description. */
+						$parts[] = sprintf(__('Reason: %s','merchant-wiki-audit'), $reason);
 					}
 							if ($verdict !== '') {
-								$parts[] = sprintf(
-									/* translators: %s: verdict text from Google Search Console */
-									__('Verdict: %s','merchant-wiki-audit'),
-									$verdict
-								);
+								/* translators: %s: Inspection API verdict. */
+								$parts[] = sprintf(__('Verdict: %s','merchant-wiki-audit'), $verdict);
 							}
 							$inspect_time = $source === 'page' ? $pi_inspected_at : $inspected_at;
 							if ($inspect_time) {
-								$parts[] = sprintf(
-									/* translators: %s: formatted timestamp */
-									__('Last checked: %s','merchant-wiki-audit'),
-									mysql2date('Y-m-d H:i', $inspect_time)
-								);
+								/* translators: %s: last inspection timestamp. */
+								$parts[] = sprintf(__('Last checked: %s','merchant-wiki-audit'), mysql2date('Y-m-d H:i', $inspect_time));
 							}
 							if ($ttl_until) {
-								$parts[] = sprintf(
-									/* translators: %s: formatted timestamp */
-									__('TTL until: %s','merchant-wiki-audit'),
-									mysql2date('Y-m-d H:i', $ttl_until)
-								);
+								/* translators: %s: TTL expiry timestamp. */
+								$parts[] = sprintf(__('TTL until: %s','merchant-wiki-audit'), mysql2date('Y-m-d H:i', $ttl_until));
 							}
 							if ($source) {
 								$parts[] = ($source === 'page') ? __('Source: Page indexing','merchant-wiki-audit') : __('Source: Inspection API','merchant-wiki-audit');
 							}
-							if ($last_error !== '') {
-								$parts[] = sprintf(
-									/* translators: %s: error message text */
-									__('Last error: %s','merchant-wiki-audit'),
-									$last_error
-								);
-							}
+								if ($last_error !== '') {
+									/* translators: %s: last Inspection API error string. */
+									$parts[] = sprintf(__('Last error: %s','merchant-wiki-audit'), $last_error);
+								}
 							$classes = array('mw-gsc-status', $class);
 							if ($stale) {
 								$classes[] = 'mw-gsc-status--stale';
@@ -1748,7 +1872,7 @@ function mw_audit_render_page($view = 'dashboard') {
 			<p class="mw-box-hint"><?php echo esc_html__('Save OAuth credentials, connect your Google account, and pick a property before using either import mode or the Inspection API.','merchant-wiki-audit'); ?></p>
 			<p class="description"><?php
 				printf(
-					/* translators: %s: link to Google Cloud Console credentials page */
+					/* translators: %s: Google Cloud Console link */
 					esc_html__('Create OAuth credentials under Google Cloud Console → Credentials (%s).','merchant-wiki-audit'),
 					sprintf(
 						'<a href="%s" target="_blank" rel="noreferrer noopener">%s</a>',
@@ -1808,14 +1932,16 @@ function mw_audit_render_page($view = 'dashboard') {
 						<label>
 							<?php echo esc_html__('Inspection cache TTL','merchant-wiki-audit'); ?>
 							<select id="mw-gsc-ttl" class="mw-card-field" style="min-width:180px;">
-								<?php foreach ($gsc_ttl_options as $ttl_option): ?>
-									<option value="<?php echo esc_attr($ttl_option); ?>" <?php selected((int)$ttl_option, (int)$gsc_ttl_hours); ?>>
-										<?php printf(
-											/* translators: %d: number of hours */
-											esc_html__('%d hours','merchant-wiki-audit'),
-											(int) $ttl_option
-										); ?>
-									</option>
+									<?php foreach ($gsc_ttl_options as $ttl_option): ?>
+										<option value="<?php echo esc_attr($ttl_option); ?>" <?php selected((int)$ttl_option, (int)$gsc_ttl_hours); ?>>
+											<?php
+											printf(
+												/* translators: %d: number of hours before cached data expires. */
+												esc_html__('%d hours','merchant-wiki-audit'),
+												(int) $ttl_option
+											);
+											?>
+										</option>
 								<?php endforeach; ?>
 							</select>
 						</label>
@@ -1840,94 +1966,6 @@ function mw_audit_render_page($view = 'dashboard') {
 			<?php endif; ?>
 		</div>
 
-		<span id="mw-gsc-import"></span>
-		<div class="mw-card">
-			<h3><?php echo esc_html__('Google Search Console Imports','merchant-wiki-audit'); ?></h3>
-			<?php
-				$gsc_import_mode = $settings['gsc_import_mode'] ?? 'csv';
-				$gsc_mode_is_sheets = ($gsc_import_mode === 'sheets');
-			?>
-			<div class="mw-gsc-mode-switch">
-				<form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" class="mw-gsc-mode-form">
-					<?php wp_nonce_field('mw_audit_save_settings', 'mw_audit_save_settings_nonce_alt'); ?>
-					<input type="hidden" name="action" value="mw_audit_save_settings">
-					<label>
-						<span><?php echo esc_html__('Choose how to import GSC data','merchant-wiki-audit'); ?></span>
-						<select id="mw-gsc-import-mode" name="gsc_import_mode">
-							<option value="csv" <?php selected($gsc_import_mode, 'csv'); ?>><?php echo esc_html__('Import GSC as CSV','merchant-wiki-audit'); ?></option>
-							<option value="sheets" <?php selected($gsc_import_mode, 'sheets'); ?>><?php echo esc_html__('Import via Google Sheet','merchant-wiki-audit'); ?></option>
-						</select>
-					</label>
-					<button class="button" type="submit"><?php echo esc_html__('Save preference','merchant-wiki-audit'); ?></button>
-				</form>
-				<p id="mw-gsc-sheets-warning" class="description <?php echo $gsc_mode_is_sheets ? '' : 'mw-hidden'; ?>"<?php echo $gsc_mode_is_sheets ? '' : ' hidden'; ?>>
-					<?php echo esc_html__('This is a complex integration that requires Google Cloud Console credentials and we do not recommend it unless you need automation.','merchant-wiki-audit'); ?>
-				</p>
-			</div>
-
-			<div class="mw-gsc-mode-section mw-gsc-mode-sheets <?php echo $gsc_mode_is_sheets ? '' : 'mw-hidden'; ?>"<?php echo $gsc_mode_is_sheets ? '' : ' hidden'; ?>>
-				<div class="mw-gsc-import-block">
-					<h4><?php echo esc_html__('Page Indexing Import','merchant-wiki-audit'); ?></h4>
-					<p class="mw-box-hint"><?php echo esc_html__('Imports "Page indexing" report from GSC to detect why pages are excluded from index.','merchant-wiki-audit'); ?></p>
-					<div class="mw-gsc-assemble">
-						<label style="display:block; margin-bottom:6px;">
-							<?php echo esc_html__('Google Sheets links (one per line)','merchant-wiki-audit'); ?>
-							<textarea id="mw-gsc-assemble-input" class="regular-text mw-card-field" rows="4" style="width:100%;max-width:100%;" placeholder="https://docs.google.com/spreadsheets/d/...\nhttps://docs.google.com/spreadsheets/d/...\n..."></textarea>
-						</label>
-						<button type="button" class="button" id="mw-gsc-assemble-button"><?php echo esc_html__('Assemble result sheet','merchant-wiki-audit'); ?></button>
-						<span id="mw-gsc-assemble-status" class="mw-inline-status" aria-live="polite"></span>
-					</div>
-					<?php if ($gsc_has_sheets): ?>
-						<div class="mw-gsc-sheets">
-							<label style="display:block; margin-bottom:6px;">
-								<?php echo esc_html__('Sheet URL or ID','merchant-wiki-audit'); ?>
-								<input type="text" id="mw-gsc-sheet-input" class="regular-text mw-card-field" style="width:100%;max-width:100%;" placeholder="https://docs.google.com/spreadsheets/d/...">
-							</label>
-							<label style="display:block; margin-bottom:6px;">
-								<?php echo esc_html__('Range (e.g. Page indexing!A:Z)','merchant-wiki-audit'); ?>
-								<input type="text" id="mw-gsc-sheet-range" class="regular-text mw-card-field" style="width:100%;max-width:100%;" value="A:Z">
-							</label>
-							<label style="display:block; margin-bottom:10px;">
-								<input type="checkbox" id="mw-gsc-sync-override" value="1">
-								<?php echo esc_html__('Allow Page indexing reasons to overwrite inspection coverage','merchant-wiki-audit'); ?>
-							</label>
-							<button type="button" class="button" id="mw-gsc-sync-button"><?php echo esc_html__('Sync Page indexing (Sheets)','merchant-wiki-audit'); ?></button>
-							<span id="mw-gsc-sync-status" class="mw-inline-status" aria-live="polite"></span>
-						</div>
-					<?php else: ?>
-						<p class="description"><?php echo esc_html__('Use the Connect Sheets button in the connection card above to enable this mode.','merchant-wiki-audit'); ?></p>
-					<?php endif; ?>
-				</div>
-			</div>
-
-			<div class="mw-gsc-mode-section mw-gsc-mode-csv <?php echo $gsc_mode_is_sheets ? 'mw-hidden' : ''; ?>"<?php echo $gsc_mode_is_sheets ? ' hidden' : ''; ?>>
-				<div class="mw-gsc-import-block">
-					<h4><?php echo esc_html__('Page Indexing Import','merchant-wiki-audit'); ?></h4>
-					<p class="mw-box-hint"><?php echo esc_html__('Imports "Page indexing" report from GSC to detect why pages are excluded from index.','merchant-wiki-audit'); ?></p>
-					<form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" enctype="multipart/form-data" class="mw-gsc-import-csv">
-						<?php wp_nonce_field('mw_gsc_import_pi_csv'); ?>
-						<input type="hidden" name="action" value="mw_gsc_import_pi_csv">
-						<label style="display:block; margin-bottom:6px;">
-							<?php echo esc_html__('Table CSV (Table.csv)','merchant-wiki-audit'); ?>
-							<input type="file" name="mw_gsc_pi_table" accept=".csv" required>
-						</label>
-						<label style="display:block; margin-bottom:6px;">
-							<?php echo esc_html__('Metadata CSV (Metadata.csv, optional)','merchant-wiki-audit'); ?>
-							<input type="file" name="mw_gsc_pi_meta" accept=".csv">
-						</label>
-						<label style="display:block; margin-bottom:6px;">
-							<input type="checkbox" name="override" value="1">
-							<?php echo esc_html__('Allow Page indexing data to overwrite inspection coverage','merchant-wiki-audit'); ?>
-						</label>
-						<button class="button"><?php echo esc_html__('Import CSV','merchant-wiki-audit'); ?></button>
-					</form>
-				</div>
-			</div>
-
-			<p class="description" style="margin-top:10px;">
-				<?php echo esc_html__('Index coverage data comes from Google Search Console and may lag by a few days. Site ownership in GSC is required.','merchant-wiki-audit'); ?>
-			</p>
-		</div>
 
 		<div class="mw-card">
 			<h3><?php echo esc_html__('Maintenance','merchant-wiki-audit'); ?></h3>

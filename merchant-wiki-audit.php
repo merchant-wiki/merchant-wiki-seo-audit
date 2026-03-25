@@ -18,11 +18,6 @@ define('MW_AUDIT_DIR', plugin_dir_path(__FILE__));
 define('MW_AUDIT_URL', plugin_dir_url(__FILE__));
 define('MW_AUDIT_DEBUG', defined('WP_DEBUG') && WP_DEBUG);
 
-// i18n
-add_action('init', function(){
-  load_plugin_textdomain('merchant-wiki-audit', false, dirname(plugin_basename(__FILE__)).'/languages');
-});
-
 require_once MW_AUDIT_DIR.'inc/db.php';
 require_once MW_AUDIT_DIR.'inc/class-queue.php';
 require_once MW_AUDIT_DIR.'inc/class-robots.php';
@@ -93,11 +88,13 @@ add_action('admin_enqueue_scripts', function($hook){
       'ttlSaved'     => __('TTL updated', 'merchant-wiki-audit'),
       'sheetRequired'=> __('Enter Google Sheet URL or ID', 'merchant-wiki-audit'),
       'syncWorking'  => __('Sync in progress...', 'merchant-wiki-audit'),
+      /* translators: %imported% and %skipped% will be replaced with counts of processed rows. */
       'syncDone'     => __('Import finished: %imported% imported, %skipped% skipped', 'merchant-wiki-audit'),
       'priorityLoading' => __('Loading priority list...', 'merchant-wiki-audit'),
       'priorityEmpty'   => __('No URLs match this filter yet.', 'merchant-wiki-audit'),
       'priorityError'   => __('Unable to load the priority list.', 'merchant-wiki-audit'),
       'assembleWorking' => __('Building combined sheet…', 'merchant-wiki-audit'),
+      /* translators: %link% will be replaced with a URL to the generated sheet. */
       'assembleDone'    => __('Combined sheet ready: %link%', 'merchant-wiki-audit'),
       'assembleError'   => __('Unable to assemble sheets. Check the URLs and try again.', 'merchant-wiki-audit'),
       'geminiCopied'    => __('Prompt copied. Gemini opened in a new tab — paste the current content right away.', 'merchant-wiki-audit'),
@@ -108,8 +105,11 @@ add_action('admin_enqueue_scripts', function($hook){
       'similarNeedReference'=> __('Load a reference URL first.', 'merchant-wiki-audit'),
       'similarQueryFailed'=> __('Unable to load matches.', 'merchant-wiki-audit'),
       'similarNoRows'   => __('No matches found for the selected filters.', 'merchant-wiki-audit'),
+      /* translators: 1: first row number shown, 2: last row number shown, 3: total number of matches. */
       'similarSummary'  => __('Showing %1$s–%2$s of %3$s matches', 'merchant-wiki-audit'),
       'similarExportError' => __('Run a similar search before exporting.', 'merchant-wiki-audit'),
+      /* translators: %expected%: required filename; %actual%: filename chosen by the user. */
+      'gscFilenameMismatch' => __('The filename is not %expected% but %actual%. Are you sure you want to use it?', 'merchant-wiki-audit'),
     ]
   ]);
 });

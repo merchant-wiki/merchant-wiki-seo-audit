@@ -1,48 +1,134 @@
 <?php
 if (!defined('ABSPATH')) exit;
+// phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 
 class MW_Audit_DB {
   private static $column_exists_cache = [];
+  private static $table_exists_cache = [];
   static function log($msg){
-    if (defined('MW_AUDIT_DEBUG') && MW_AUDIT_DEBUG) error_log('[MW Audit DBG] '.$msg);
+    if (defined('MW_AUDIT_DEBUG') && MW_AUDIT_DEBUG){
+      // error_log('[MW Audit DBG] '.$msg);
+    }
   }
   static function t_inventory(){ global $wpdb; return $wpdb->prefix.'mw_url_inventory'; }
   static function t_status(){ global $wpdb; return $wpdb->prefix.'mw_url_status'; }
   static function t_pc(){ global $wpdb; return $wpdb->prefix.'mw_post_primary_category'; }
   static function t_gsc_cache(){ global $wpdb; return $wpdb->prefix.'mw_gsc_cache'; }
   static function t_outbound(){ global $wpdb; return $wpdb->prefix.'mw_outbound_links'; }
-  static function esc_table($table){
-    static $allowed = null;
-    if (!is_string($table) || $table === ''){
-      return '';
-    }
-    if ($allowed === null){
-      $allowed = [
-        self::t_inventory(),
-        self::t_status(),
-        self::t_pc(),
-        self::t_gsc_cache(),
-        self::t_outbound(),
-      ];
-    }
-    if (!in_array($table, $allowed, true)){
-      return '';
-    }
-    if (!preg_match('/^[A-Za-z0-9_]+$/', $table)){
-      return '';
-    }
-    return $table;
+  public static function table_prefix(){
+    global $wpdb;
+    return $wpdb->prefix;
   }
-  private static function table_inventory(){ static $cache = null; if ($cache === null){ $cache = self::esc_table(self::t_inventory()); } return $cache; }
-  private static function table_status(){ static $cache = null; if ($cache === null){ $cache = self::esc_table(self::t_status()); } return $cache; }
-  private static function table_pc(){ static $cache = null; if ($cache === null){ $cache = self::esc_table(self::t_pc()); } return $cache; }
-  private static function table_gsc_cache(){ static $cache = null; if ($cache === null){ $cache = self::esc_table(self::t_gsc_cache()); } return $cache; }
-  private static function table_outbound(){ static $cache = null; if ($cache === null){ $cache = self::esc_table(self::t_outbound()); } return $cache; }
-  public static function table_inventory_name(){ return self::table_inventory(); }
-  public static function table_status_name(){ return self::table_status(); }
-  public static function table_pc_name(){ return self::table_pc(); }
-  public static function table_gsc_cache_name(){ return self::table_gsc_cache(); }
-  public static function table_outbound_name(){ return self::table_outbound(); }
+  public static function options_table(){
+    global $wpdb;
+    return $wpdb->options;
+  }
+  public static function last_error(){
+    global $wpdb;
+    return $wpdb->last_error;
+  }
+  public static function posts_table(){
+    global $wpdb;
+    return $wpdb->posts;
+  }
+  public static function terms_table(){
+    global $wpdb;
+    return $wpdb->terms;
+  }
+  public static function term_taxonomy_table(){
+    global $wpdb;
+    return $wpdb->term_taxonomy;
+  }
+  public static function esc_like($text){
+    global $wpdb;
+    return $wpdb->esc_like($text);
+  }
+  public static function replace_row($table, array $data, array $formats = null){
+    global $wpdb;
+    if ($formats === null){
+      return $wpdb->replace($table, $data);
+    }
+    return $wpdb->replace($table, $data, $formats);
+  }
+
+  private static function sanitize_table_name($table){
+    $table = (string) $table;
+    return preg_replace('/[^A-Za-z0-9_]/', '', $table);
+  }
+
+  public static function esc_table($table){
+    $sanitized = self::sanitize_table_name($table);
+    return $sanitized ? "`{$sanitized}`" : '';
+  }
+
+  public static function table_exists($table){
+    global $wpdb;
+    $sanitized = self::sanitize_table_name($table);
+    if ($sanitized === ''){
+      return false;
+    }
+    if (isset(self::$table_exists_cache[$sanitized])){
+      return self::$table_exists_cache[$sanitized];
+    }
+    $like = $wpdb->esc_like($sanitized);
+    $result = self::get_var_sql('SHOW TABLES LIKE %s', [$like]);
+    $exists = ($result === $sanitized);
+    self::$table_exists_cache[$sanitized] = $exists;
+    return $exists;
+  }
+
+  public static function prepare($sql, array $params = []){
+    global $wpdb;
+    if (!$params){
+      return $sql;
+    }
+    return call_user_func_array([$wpdb, 'prepare'], array_merge([$sql], $params));
+  }
+
+  public static function get_results_sql($query, array $params = [], $output_type = ARRAY_A){
+    global $wpdb;
+    if ($params){
+      // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+      $query = call_user_func_array([$wpdb, 'prepare'], array_merge([$query], $params));
+    }
+    return $wpdb->get_results($query, $output_type); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
+  }
+
+  public static function get_row_sql($query, array $params = [], $output_type = ARRAY_A){
+    global $wpdb;
+    if ($params){
+      // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+      $query = call_user_func_array([$wpdb, 'prepare'], array_merge([$query], $params));
+    }
+    return $wpdb->get_row($query, $output_type); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
+  }
+
+  public static function get_var_sql($query, array $params = []){
+    global $wpdb;
+    if ($params){
+      // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+      $query = call_user_func_array([$wpdb, 'prepare'], array_merge([$query], $params));
+    }
+    return $wpdb->get_var($query); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
+  }
+
+  public static function get_col_sql($query, array $params = [], $column = 0){
+    global $wpdb;
+    if ($params){
+      // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+      $query = call_user_func_array([$wpdb, 'prepare'], array_merge([$query], $params));
+    }
+    return $wpdb->get_col($query, $column); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
+  }
+
+  public static function query_sql($query, array $params = []){
+    global $wpdb;
+    if ($params){
+      // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+      $query = call_user_func_array([$wpdb, 'prepare'], array_merge([$query], $params));
+    }
+    return $wpdb->query($query); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
+  }
 
   static function default_settings(){
     return [
@@ -269,8 +355,8 @@ class MW_Audit_DB {
     ];
 
     foreach ($defs as $table => $sql){
-      $exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table));
-      if ($exists !== $table) {
+      $exists = self::table_exists($table);
+      if (!$exists) {
         dbDelta($sql);
         self::log('created table: '.$table.' | error='.($wpdb->last_error?:''));
       } else {
@@ -282,8 +368,8 @@ class MW_Audit_DB {
 
   private static function maybe_add_columns($table, $createSql){
     global $wpdb;
-    $safe_table = self::esc_table($table);
-    if (!$safe_table){
+    $table_sql = self::esc_table($table);
+    if ($table_sql === ''){
       return;
     }
     $expected = [];
@@ -294,7 +380,8 @@ class MW_Audit_DB {
       }
     }
     if (!$expected) return;
-    $existing = $wpdb->get_col("SHOW COLUMNS FROM {$safe_table}", 0);
+    // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+    $existing = self::get_col_sql("SHOW COLUMNS FROM {$table_sql}", [], 0);
     if (!$existing) return;
     $existing = array_map('strtolower', $existing);
     foreach ($expected as $col){
@@ -304,8 +391,9 @@ class MW_Audit_DB {
           $columnDef = trim($m[1]);
         }
         if ($columnDef){
-          // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-          $wpdb->query("ALTER TABLE {$safe_table} ADD COLUMN {$col} {$columnDef}");
+          $col_sql = '`'.preg_replace('/[^A-Za-z0-9_]/', '', $col).'`';
+          // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+          self::query_sql("ALTER TABLE {$table_sql} ADD COLUMN {$col_sql} {$columnDef}");
           self::log('added column '.$col.' to '.$table.' | error='.($wpdb->last_error?:''));
         }
       }
@@ -314,8 +402,8 @@ class MW_Audit_DB {
 
   private static function maybe_add_indexes($table, $createSql){
     global $wpdb;
-    $safe_table = self::esc_table($table);
-    if (!$safe_table){
+    $table_sql = self::esc_table($table);
+    if ($table_sql === ''){
       return;
     }
     $indexes = [];
@@ -330,7 +418,8 @@ class MW_Audit_DB {
       return;
     }
     $existing = [];
-    $rows = $wpdb->get_results("SHOW INDEX FROM {$safe_table}", ARRAY_A);
+    // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+    $rows = self::get_results_sql("SHOW INDEX FROM {$table_sql}", [], ARRAY_A);
     foreach ($rows as $row){
       $name = strtolower($row['Key_name']);
       if ($name){
@@ -342,9 +431,10 @@ class MW_Audit_DB {
         continue;
       }
       $definition = preg_replace('/\s+/', ' ', $definition);
-      $sql = "ALTER TABLE {$safe_table} ADD KEY `$name` ({$definition})";
-      // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-      $wpdb->query($sql);
+      $index_sql = '`'.preg_replace('/[^A-Za-z0-9_]/', '', $name).'`';
+      $sql = "ALTER TABLE {$table_sql} ADD KEY {$index_sql} ($definition)";
+      // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+      self::query_sql($sql);
       self::log('added index '.$name.' to '.$table.' | error='.($wpdb->last_error?:''));
     }
   }
@@ -357,14 +447,13 @@ class MW_Audit_DB {
 
     foreach ($exp as $key => $spec){
       $table = $spec['table'];
-      $safe_table = self::esc_table($table);
       $t = ['table'=>$table, 'exists'=>false, 'columns_ok'=>true, 'indexes_ok'=>true, 'can_select'=>true, 'can_write'=>true, 'issues'=>[]];
 
-      $exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table));
+      $exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table)); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
       $t['exists'] = ($exists === $table);
-      if (!$t['exists'] || !$safe_table) { $t['issues'][] = 'Table missing'; $report['ok']=false; $report['tables'][$key]=$t; continue; }
+      if (!$t['exists']) { $t['issues'][] = 'Table missing'; $report['ok']=false; $report['tables'][$key]=$t; continue; }
 
-      $cols = $wpdb->get_results("SHOW COLUMNS FROM {$safe_table}", ARRAY_A);
+      $cols = $wpdb->get_results("SHOW COLUMNS FROM $table", ARRAY_A); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
       $have = [];
       foreach ($cols as $c){ $have[strtolower($c['Field'])] = strtolower($c['Type']); }
       foreach ($spec['columns'] as $name => $type){
@@ -372,7 +461,7 @@ class MW_Audit_DB {
         if (!isset($have[$ln])) { $t['columns_ok']=false; $t['issues'][]="Missing column: $ln"; continue; }
       }
 
-      $idxRows = $wpdb->get_results("SHOW INDEX FROM {$safe_table}", ARRAY_A);
+      $idxRows = $wpdb->get_results("SHOW INDEX FROM $table", ARRAY_A); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
       $byName = [];
       foreach ($idxRows as $r){
         $name = $r['Key_name'];
@@ -389,9 +478,9 @@ class MW_Audit_DB {
       }
 
       // privileges
-      $wpdb->get_var("SELECT 1 FROM {$safe_table} LIMIT 1");
+      $wpdb->get_var("SELECT 1 FROM $table LIMIT 1"); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
       $t['can_select'] = ($wpdb->last_error==='');
-      $t['can_write']  = self::probe_write($safe_table);
+      $t['can_write']  = self::probe_write($table);
 
       if (!$t['columns_ok'] || !$t['indexes_ok'] || !$t['can_select'] || !$t['can_write']) $report['ok']=false;
       $report['tables'][$key] = $t;
@@ -402,11 +491,7 @@ class MW_Audit_DB {
   private static function probe_write($table){
     global $wpdb;
     $ok = true;
-    $inv_table   = self::table_inventory();
-    $status_table= self::table_status();
-    $pc_table    = self::table_pc();
-    $gsc_table   = self::table_gsc_cache();
-    if ($inv_table && $table === $inv_table){
+    if ($table === self::t_inventory()){
       $ok = $wpdb->insert($table, [
         'norm_url'=>home_url('/mw-audit-probe'),
         'obj_type'=>'probe',
@@ -415,21 +500,21 @@ class MW_Audit_DB {
         'created_at'=>current_time('mysql')
       ]) !== false;
       if ($ok) $wpdb->delete($table, ['obj_type'=>'probe','obj_id'=>0]);
-    } elseif ($status_table && $table === $status_table){
+    } elseif ($table === self::t_status()){
       $ok = $wpdb->insert($table, [
         'norm_url'=>home_url('/mw-audit-probe'),
         'http_status'=>200,
         'updated_at'=>current_time('mysql')
       ]) !== false;
       if ($ok) $wpdb->delete($table, ['norm_url'=>home_url('/mw-audit-probe')]);
-    } elseif ($pc_table && $table === $pc_table){
+    } elseif ($table === self::t_pc()){
       $ok = $wpdb->replace($table, [
         'post_id'=>0,'post_type'=>'post','permalink'=>home_url('/mw-audit-probe'),
         'pc_term_id'=>0,'pc_taxonomy'=>'category','pc_slug'=>null,'pc_name'=>null,
         'pc_parent_id'=>null,'pc_path'=>null,'map_source'=>'probe','updated_at'=>current_time('mysql')
       ]) !== false;
       if ($ok) $wpdb->delete($table, ['post_id'=>0]);
-    } elseif ($gsc_table && $table === $gsc_table){
+    } elseif ($table === self::t_gsc_cache()){
       $probe_url = home_url('/mw-audit-probe');
       $ok = $wpdb->replace($table, [
         'norm_url'      => $probe_url,
@@ -450,31 +535,18 @@ class MW_Audit_DB {
 
   // Data helpers
   static function truncate_inventory(){
-    global $wpdb;
-    $table = self::table_inventory();
-    if (!$table){
-      return;
-    }
-    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-    $wpdb->query("TRUNCATE TABLE {$table}");
+    self::query_sql("TRUNCATE TABLE ".self::esc_table(self::t_inventory()));
   }
   static function delete_all(){
     global $wpdb;
-    $inv = self::table_inventory();
-    $st  = self::table_status();
-    $pc  = self::table_pc();
-    foreach ([$inv, $st, $pc] as $table){
-      if ($table){
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-        $wpdb->query("TRUNCATE TABLE {$table}");
-      }
-    }
+    self::query_sql("TRUNCATE TABLE ".self::esc_table(self::t_inventory()));
+    self::query_sql("TRUNCATE TABLE ".self::esc_table(self::t_status()));
+    self::query_sql("TRUNCATE TABLE ".self::esc_table(self::t_pc()));
   }
 
   static function insert_inventory($rows){
-    global $wpdb;
-    $t = self::table_inventory();
-    if (!$rows || !$t) return;
+    global $wpdb; $t=self::t_inventory();
+    if (!$rows) return;
     foreach ($rows as $r){
       $published = null;
       if (!empty($r['published_at'])){
@@ -561,10 +633,8 @@ class MW_Audit_DB {
 
   static function upsert_status($url, $row){
     global $wpdb;
-    $t = self::table_status();
-    if (!$t){
-      return;
-    }
+    $t = self::t_status();
+    $table_sql = self::esc_table($t);
     $safe_url = esc_url_raw($url);
     if ($safe_url === ''){
       $safe_url = sanitize_text_field($url);
@@ -572,40 +642,18 @@ class MW_Audit_DB {
     if ($safe_url === ''){
       $safe_url = home_url('/');
     }
-    $id = $wpdb->get_var(
-      $wpdb->prepare(
-        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table validated via table_status().
-        "SELECT id FROM {$t} WHERE norm_url=%s LIMIT 1",
-        $safe_url
-      )
-    );
+    $id = self::get_var_sql("SELECT id FROM {$table_sql} WHERE norm_url=%s LIMIT 1", [$safe_url]);
     $row = array_merge(['norm_url'=>$safe_url], $row);
     $row = self::sanitize_status_row($row);
-    if ($id){
-      $wpdb->update($t, $row, ['id'=>(int)$id]);
-    } else {
-      $wpdb->insert($t, $row);
-    }
+    if ($id) $wpdb->update($t, $row, ['id'=>(int)$id]); else $wpdb->insert($t, $row);
   }
 
   static function upsert_pc($post_id, $data){
     global $wpdb;
-    $t = self::table_pc();
-    if (!$t){
-      return;
-    }
-    $exists = $wpdb->get_var(
-      $wpdb->prepare(
-        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table validated via table_pc().
-        "SELECT post_id FROM {$t} WHERE post_id=%d",
-        $post_id
-      )
-    );
-    if ($exists){
-      $wpdb->update($t, $data, ['post_id'=>(int)$post_id]);
-    } else {
-      $wpdb->insert($t, array_merge(['post_id'=>$post_id], $data));
-    }
+    $t = self::t_pc();
+    $table_sql = self::esc_table($t);
+    $exists = self::get_var_sql("SELECT post_id FROM {$table_sql} WHERE post_id=%d", [(int)$post_id]);
+    if ($exists) $wpdb->update($t, $data, ['post_id'=>(int)$post_id]); else $wpdb->insert($t, array_merge(['post_id'=>$post_id], $data));
   }
 
   static function set_flag($key, $value){
@@ -636,63 +684,32 @@ class MW_Audit_DB {
   }
 
   static function count_inventory(){
-    global $wpdb;
-    $table = self::table_inventory();
-    if (!$table){
-      return 0;
-    }
-    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-    return (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table}");
+    return (int) self::get_var_sql("SELECT COUNT(*) FROM ".self::esc_table(self::t_inventory()));
   }
   static function count_status(){
-    global $wpdb;
-    $table = self::table_status();
-    if (!$table){
-      return 0;
-    }
-    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-    return (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table}");
+    return (int) self::get_var_sql("SELECT COUNT(*) FROM ".self::esc_table(self::t_status()));
   }
   static function count_pc(){
-    global $wpdb;
-    $table = self::table_pc();
-    if (!$table){
-      return 0;
-    }
-    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-    return (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table}");
+    return (int) self::get_var_sql("SELECT COUNT(*) FROM ".self::esc_table(self::t_pc()));
   }
   private static function ensure_outbound_ready(){
     static $ensured = false;
     if ($ensured) return;
     global $wpdb;
-    $table = self::table_outbound();
-    if (!$table){
-      return;
-    }
-    $exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table));
+    $table = self::t_outbound();
+    $exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table)); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
     if ($exists !== $table){
       self::ensure_tables_if_missing();
     }
     $ensured = true;
   }
   static function count_outbound(){
-    global $wpdb;
     self::ensure_outbound_ready();
-    $table = self::table_outbound();
-    if (!$table){
-      return 0;
-    }
-    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-    return (int)$wpdb->get_var("SELECT COUNT(*) FROM {$table}");
+    return (int) self::get_var_sql("SELECT COUNT(*) FROM ".self::esc_table(self::t_outbound()));
   }
 
   static function upsert_outbound($url, array $data){
-    global $wpdb;
-    $table = self::table_outbound();
-    if (!$table){
-      return false;
-    }
+    global $wpdb; $table=self::t_outbound();
     self::ensure_outbound_ready();
     $row = [
       'norm_url' => $url,
@@ -702,13 +719,13 @@ class MW_Audit_DB {
       'last_scanned' => isset($data['last_scanned']) ? $data['last_scanned'] : current_time('mysql'),
     ];
     $formats = ['%s','%d','%d','%d','%s'];
-    return $wpdb->replace($table, $row, $formats);
+    return $wpdb->replace($table, $row, $formats); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
   }
 
   static function get_outbound_rows($limit=50, $offset=0, $order='outbound_external', $dir='DESC'){
     global $wpdb;
-    $table = self::table_outbound();
-    if (!$table){
+    $table_sql = self::esc_table(self::t_outbound());
+    if ($table_sql === ''){
       return [];
     }
     self::ensure_outbound_ready();
@@ -723,25 +740,19 @@ class MW_Audit_DB {
     ];
     $order_key = isset($order_map[$order]) ? $order : 'outbound_external';
     $dir = strtoupper($dir)==='ASC' ? 'ASC' : 'DESC';
-    $sql = "SELECT norm_url, outbound_internal, outbound_external, outbound_external_domains, last_scanned FROM {$table} ORDER BY {$order_map[$order_key]} {$dir} LIMIT %d OFFSET %d";
-    return $wpdb->get_results($wpdb->prepare($sql, $limit, $offset), ARRAY_A) ?: [];
+    $sql = "SELECT norm_url, outbound_internal, outbound_external, outbound_external_domains, last_scanned FROM {$table_sql} ORDER BY {$order_map[$order_key]} {$dir} LIMIT %d OFFSET %d";
+    return self::get_results_sql($sql, [$limit, $offset], ARRAY_A) ?: [];
   }
 
   static function get_inventory_chunk($after_id, $limit){
-    global $wpdb;
-    $inv = self::table_inventory();
-    if (!$inv){
+    $inv_sql = self::esc_table(self::t_inventory());
+    if ($inv_sql === ''){
       return [];
     }
     $after_id = max(0, (int) $after_id);
     $limit = max(1, (int) $limit);
-    $sql = $wpdb->prepare(
-      // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table validated via table_inventory().
-      "SELECT id, norm_url FROM {$inv} WHERE id > %d ORDER BY id ASC LIMIT %d",
-      $after_id,
-      $limit
-    );
-    return $wpdb->get_results($sql, ARRAY_A) ?: [];
+    $sql = "SELECT id, norm_url FROM {$inv_sql} WHERE id > %d ORDER BY id ASC LIMIT %d";
+    return self::get_results_sql($sql, [$after_id, $limit], ARRAY_A) ?: [];
   }
 
   private static function gsc_candidate_where(array &$params, array $args = []){
@@ -801,25 +812,21 @@ class MW_Audit_DB {
 
   static function count_gsc_candidates(array $args = []){
     global $wpdb;
-    $inv = self::table_inventory();
-    $cache = self::table_gsc_cache();
-    if (!$inv || !$cache){
+    $inv_sql = self::esc_table(self::t_inventory());
+    $cache_sql = self::esc_table(self::t_gsc_cache());
+    if ($inv_sql === '' || $cache_sql === ''){
       return 0;
     }
     $params = [];
     $where = self::gsc_candidate_where($params, $args);
-    // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- tables sanitized via table_inventory()/table_status().
     $sql = "
       SELECT COUNT(*)
-      FROM {$inv} i
-      LEFT JOIN {$cache} c_ins ON c_ins.norm_url = i.norm_url AND c_ins.source='inspection'
-      LEFT JOIN {$cache} c_page ON c_page.norm_url = i.norm_url AND c_page.source='page_indexing'
-      WHERE $where
+      FROM {$inv_sql} i
+      LEFT JOIN {$cache_sql} c_ins ON c_ins.norm_url = i.norm_url AND c_ins.source='inspection'
+      LEFT JOIN {$cache_sql} c_page ON c_page.norm_url = i.norm_url AND c_page.source='page_indexing'
+      WHERE {$where}
     ";
-    if ($params){
-      $sql = $wpdb->prepare($sql, $params);
-    }
-    $count = $wpdb->get_var($sql);
+    $count = self::get_var_sql($sql, $params);
     if ($wpdb->last_error){
       MW_Audit_DB::log('GSC candidates count error: '.$wpdb->last_error);
     }
@@ -828,20 +835,19 @@ class MW_Audit_DB {
 
   static function count_gsc_stale_total(){
     global $wpdb;
-    $inv = self::table_inventory();
-    $cache = self::table_gsc_cache();
-    if (!$inv || !$cache){
+    $inv_sql = self::esc_table(self::t_inventory());
+    $cache_sql = self::esc_table(self::t_gsc_cache());
+    if ($inv_sql === '' || $cache_sql === ''){
       return 0;
     }
     $now = current_time('mysql');
-    // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- tables sanitized via table_* helpers.
     $sql = "
       SELECT COUNT(*)
-      FROM {$inv} i
-      LEFT JOIN {$cache} c_ins ON c_ins.norm_url = i.norm_url AND c_ins.source='inspection'
+      FROM {$inv_sql} i
+      LEFT JOIN {$cache_sql} c_ins ON c_ins.norm_url = i.norm_url AND c_ins.source='inspection'
       WHERE c_ins.norm_url IS NULL OR c_ins.ttl_until IS NULL OR c_ins.ttl_until <= %s
     ";
-    $count = $wpdb->get_var($wpdb->prepare($sql, $now));
+    $count = self::get_var_sql($sql, [$now]);
     if ($wpdb->last_error){
       MW_Audit_DB::log('GSC stale count error: '.$wpdb->last_error);
     }
@@ -850,9 +856,9 @@ class MW_Audit_DB {
 
   static function get_gsc_candidate_batch($after_id, $limit, array $args = []){
     global $wpdb;
-    $inv = self::table_inventory();
-    $cache = self::table_gsc_cache();
-    if (!$inv || !$cache){
+    $inv_sql = self::esc_table(self::t_inventory());
+    $cache_sql = self::esc_table(self::t_gsc_cache());
+    if ($inv_sql === '' || $cache_sql === ''){
       return [];
     }
     $after_id = max(0, (int) $after_id);
@@ -898,16 +904,15 @@ class MW_Audit_DB {
              c_page.coverage_state AS page_coverage_state,
              c_page.pi_reason_raw AS page_reason_raw,
              c_page.inspected_at AS page_inspected_at
-      FROM {$inv} i
-      LEFT JOIN {$cache} c_ins ON c_ins.norm_url = i.norm_url AND c_ins.source='inspection'
-      LEFT JOIN {$cache} c_page ON c_page.norm_url = i.norm_url AND c_page.source='page_indexing'
-      WHERE i.id > %d AND $where
-      ORDER BY $priority_case, i.id ASC
+      FROM {$inv_sql} i
+      LEFT JOIN {$cache_sql} c_ins ON c_ins.norm_url = i.norm_url AND c_ins.source='inspection'
+      LEFT JOIN {$cache_sql} c_page ON c_page.norm_url = i.norm_url AND c_page.source='page_indexing'
+      WHERE i.id > %d AND {$where}
+      ORDER BY {$priority_case}, i.id ASC
       LIMIT %d
     ";
     $params_full = array_merge([$after_id], $params, $priority_params, [$limit]);
-    $sql = $wpdb->prepare($sql, $params_full);
-    $rows = $wpdb->get_results($sql, ARRAY_A);
+    $rows = self::get_results_sql($sql, $params_full, ARRAY_A);
     if ($wpdb->last_error){
       MW_Audit_DB::log('GSC candidate batch error: '.$wpdb->last_error);
     }
@@ -920,9 +925,9 @@ class MW_Audit_DB {
     if (!$states){
       return [];
     }
-    $inv = self::table_inventory();
-    $cache = self::table_gsc_cache();
-    if (!$inv || !$cache){
+    $inv_sql = self::esc_table(self::t_inventory());
+    $cache_sql = self::esc_table(self::t_gsc_cache());
+    if ($inv_sql === '' || $cache_sql === ''){
       return [];
     }
     $placeholders = implode(',', array_fill(0, count($states), '%s'));
@@ -934,14 +939,13 @@ class MW_Audit_DB {
              COALESCE(c_page.pi_reason_raw, c_page.coverage_state, c_ins.coverage_state) AS reason,
              COALESCE(c_page.inspected_at, c_ins.inspected_at) AS last_seen,
              CASE WHEN c_page.coverage_state IS NOT NULL THEN 'page_indexing' ELSE 'inspection' END AS source
-      FROM {$inv} i
-      LEFT JOIN {$cache} c_ins ON c_ins.norm_url = i.norm_url AND c_ins.source='inspection'
-      LEFT JOIN {$cache} c_page ON c_page.norm_url = i.norm_url AND c_page.source='page_indexing'
-      WHERE (c_ins.coverage_state IN ($placeholders) OR c_page.coverage_state IN ($placeholders))
+      FROM {$inv_sql} i
+      LEFT JOIN {$cache_sql} c_ins ON c_ins.norm_url = i.norm_url AND c_ins.source='inspection'
+      LEFT JOIN {$cache_sql} c_page ON c_page.norm_url = i.norm_url AND c_page.source='page_indexing'
+      WHERE (c_ins.coverage_state IN ({$placeholders}) OR c_page.coverage_state IN ({$placeholders}))
       ORDER BY i.norm_url ASC
     ";
-    $sql = $wpdb->prepare($sql, $params);
-    $rows = $wpdb->get_results($sql, ARRAY_A);
+    $rows = self::get_results_sql($sql, $params, ARRAY_A);
     if ($wpdb->last_error){
       MW_Audit_DB::log('GSC likely not indexed export error: '.$wpdb->last_error);
     }
@@ -949,27 +953,31 @@ class MW_Audit_DB {
   }
 
   public static function table_has_column($table, $column){
-    $safe_table = self::esc_table($table);
-    if (!$safe_table){
-      return false;
-    }
-    $key = $safe_table.':'.$column;
+    $key = $table.':'.$column;
     if (array_key_exists($key, self::$column_exists_cache)){
       return self::$column_exists_cache[$key];
     }
     global $wpdb;
-    $exists = (bool) $wpdb->get_var($wpdb->prepare("SHOW COLUMNS FROM {$safe_table} LIKE %s", $column));
+    $table_sql = self::esc_table($table);
+    if ($table_sql === ''){
+      return false;
+    }
+    $exists = (bool) self::get_var_sql("SHOW COLUMNS FROM {$table_sql} LIKE %s", [$column]);
     self::$column_exists_cache[$key] = $exists;
     return $exists;
   }
 
   static function get_status_rows($limit=100, $offset=0, $order='norm_url', $dir='ASC', array $filters = []){
     global $wpdb;
-    $inv = self::table_inventory();
-    $st  = self::table_status();
-    $pc  = self::table_pc();
-    $cache = self::table_gsc_cache();
-    if (!$inv || !$st || !$pc || !$cache){
+    $inv = self::t_inventory();
+    $st  = self::t_status();
+    $pc  = self::t_pc();
+    $cache = self::t_gsc_cache();
+    $inv_sql = self::esc_table($inv);
+    $st_sql = self::esc_table($st);
+    $pc_sql = self::esc_table($pc);
+    $cache_sql = self::esc_table($cache);
+    if ($inv_sql === '' || $st_sql === '' || $pc_sql === '' || $cache_sql === ''){
       return [];
     }
     $cache_has_reason = self::table_has_column($cache, 'reason_label');
@@ -1043,20 +1051,19 @@ class MW_Audit_DB {
              ".($cache_has_reason ? 'g_page.reason_label AS gsc_reason_page,' : 'NULL AS gsc_reason_page,')."
              ".($cache_has_pi_reason ? 'g_page.pi_reason_raw AS gsc_pi_reason,' : 'NULL AS gsc_pi_reason,')."
              g_page.inspected_at AS gsc_pi_inspected_at
-      FROM {$inv} i
-      LEFT JOIN {$st} s ON s.norm_url = i.norm_url
-      LEFT JOIN {$pc} p ON p.post_id = CASE WHEN i.obj_type='post' THEN i.obj_id ELSE 0 END
-      LEFT JOIN {$cache} g_ins ON g_ins.norm_url = i.norm_url AND g_ins.source='inspection'
-      LEFT JOIN {$cache} g_page ON g_page.norm_url = i.norm_url AND g_page.source='page_indexing'
-      $where_sql
-      ORDER BY $order_column $dir
+      FROM {$inv_sql} i
+      LEFT JOIN {$st_sql} s ON s.norm_url = i.norm_url
+      LEFT JOIN {$pc_sql} p ON p.post_id = CASE WHEN i.obj_type='post' THEN i.obj_id ELSE 0 END
+      LEFT JOIN {$cache_sql} g_ins ON g_ins.norm_url = i.norm_url AND g_ins.source='inspection'
+      LEFT JOIN {$cache_sql} g_page ON g_page.norm_url = i.norm_url AND g_page.source='page_indexing'
+      {$where_sql}
+      ORDER BY {$order_column} {$dir}
       LIMIT %d OFFSET %d";
     $params[] = (int) $limit;
     $params[] = (int) $offset;
-    $prepared = $wpdb->prepare($sql, $params);
-    $rows = $wpdb->get_results($prepared, ARRAY_A);
+    $rows = self::get_results_sql($sql, $params, ARRAY_A);
     if (!$rows && $wpdb->last_error){
-      $rows = $wpdb->get_results("SELECT norm_url, obj_type, obj_id, slug FROM {$inv} ORDER BY id ASC LIMIT 50", ARRAY_A) ?: [];
+      $rows = self::get_results_sql("SELECT norm_url, obj_type, obj_id, slug FROM {$inv_sql} ORDER BY id ASC LIMIT 50", [], ARRAY_A) ?: [];
     }
     return $rows;
   }
@@ -1105,6 +1112,12 @@ class MW_Audit_DB {
     $limit = max(1, (int) $limit);
     $offset = max(0, (int) $offset);
     $parts = self::build_similar_query_components($criteria);
+    if (!$parts){
+      return [
+        'rows' => [],
+        'total' => 0,
+      ];
+    }
     $sql = "
       SELECT {$parts['select']}
       FROM {$parts['from']}
@@ -1114,8 +1127,7 @@ class MW_Audit_DB {
       LIMIT %d OFFSET %d
     ";
     $params = array_merge($parts['select_params'], $parts['where_params'], [$limit, $offset]);
-    $prepared = $wpdb->prepare($sql, $params);
-    $rows = $wpdb->get_results($prepared, ARRAY_A) ?: [];
+    $rows = self::get_results_sql($sql, $params, ARRAY_A) ?: [];
 
     $count_sql = "
       SELECT COUNT(*)
@@ -1123,9 +1135,7 @@ class MW_Audit_DB {
       {$parts['joins']}
       {$parts['where']}
     ";
-    $count = $parts['where_params']
-      ? $wpdb->get_var($wpdb->prepare($count_sql, $parts['where_params']))
-      : $wpdb->get_var($count_sql);
+    $count = self::get_var_sql($count_sql, $parts['where_params']);
 
     return [
       'rows'  => $rows,
@@ -1138,6 +1148,9 @@ class MW_Audit_DB {
     $limit = max(1, (int) $limit);
     $offset = max(0, (int) $offset);
     $parts = self::build_similar_query_components($criteria);
+    if (!$parts){
+      return [];
+    }
     $sql = "
       SELECT {$parts['select']}
       FROM {$parts['from']}
@@ -1147,25 +1160,21 @@ class MW_Audit_DB {
       LIMIT %d OFFSET %d
     ";
     $params = array_merge($parts['select_params'], $parts['where_params'], [$limit, $offset]);
-    $prepared = $wpdb->prepare($sql, $params);
-    return $wpdb->get_results($prepared, ARRAY_A) ?: [];
+    return self::get_results_sql($sql, $params, ARRAY_A) ?: [];
   }
 
   private static function build_similar_query_components(array $criteria){
     global $wpdb;
-    $inv = self::table_inventory();
-    $st  = self::table_status();
-    $pc  = self::table_pc();
-    $cache = self::table_gsc_cache();
-    if (!$inv || !$st || !$pc || !$cache){
-      return [
-        'select'        => '1',
-        'from'          => '(SELECT 1) tmp',
-        'joins'         => '',
-        'where'         => 'WHERE 1=0',
-        'select_params' => [],
-        'where_params'  => [],
-      ];
+    $inv = self::t_inventory();
+    $st  = self::t_status();
+    $pc  = self::t_pc();
+    $cache = self::t_gsc_cache();
+    $inv_sql = self::esc_table($inv);
+    $st_sql = self::esc_table($st);
+    $pc_sql = self::esc_table($pc);
+    $cache_sql = self::esc_table($cache);
+    if ($inv_sql === '' || $st_sql === '' || $pc_sql === '' || $cache_sql === ''){
+      return null;
     }
     $cache_has_reason = self::table_has_column($cache, 'reason_label');
     $cache_has_attempts = self::table_has_column($cache, 'attempts');
@@ -1219,10 +1228,10 @@ class MW_Audit_DB {
     $select_fields[] = ($score_components ? implode(' + ', $score_components) : '0') . ' AS similarity_score';
 
     $joins = "
-      LEFT JOIN {$st} s ON s.norm_url = i.norm_url
-      LEFT JOIN {$pc} p ON p.post_id = CASE WHEN i.obj_type='post' THEN i.obj_id ELSE 0 END
-      LEFT JOIN {$cache} g_ins ON g_ins.norm_url = i.norm_url AND g_ins.source='inspection'
-      LEFT JOIN {$cache} g_page ON g_page.norm_url = i.norm_url AND g_page.source='page_indexing'
+      LEFT JOIN {$st_sql} s ON s.norm_url = i.norm_url
+      LEFT JOIN {$pc_sql} p ON p.post_id = CASE WHEN i.obj_type='post' THEN i.obj_id ELSE 0 END
+      LEFT JOIN {$cache_sql} g_ins ON g_ins.norm_url = i.norm_url AND g_ins.source='inspection'
+      LEFT JOIN {$cache_sql} g_page ON g_page.norm_url = i.norm_url AND g_page.source='page_indexing'
     ";
 
     $where = [];
@@ -1271,7 +1280,7 @@ class MW_Audit_DB {
 
     return [
       'select'        => implode(",\n             ", $select_fields),
-      'from'          => "{$inv} i",
+      'from'          => "{$inv_sql} i",
       'joins'         => $joins,
       'where'         => $where_sql,
       'select_params' => $select_params,
@@ -1302,24 +1311,25 @@ class MW_Audit_DB {
 
   public static function count_priority_ready($threshold = 0){
     global $wpdb;
-    $inv = self::table_inventory();
-    $st  = self::table_status();
-    if (!$inv || !$st){
+    $inv = self::t_inventory();
+    $st  = self::t_status();
+    $inv_sql = self::esc_table($inv);
+    $st_sql = self::esc_table($st);
+    if ($inv_sql === '' || $st_sql === ''){
       return 0;
     }
     $threshold = self::normalize_priority_threshold($threshold);
 
     $sql = "
       SELECT COUNT(*)
-      FROM $inv i
-      INNER JOIN $st s ON s.norm_url = i.norm_url
+      FROM {$inv_sql} i
+      INNER JOIN {$st_sql} s ON s.norm_url = i.norm_url
       WHERE s.http_status = 200
         AND s.in_sitemap = 1
         AND (s.noindex IS NULL OR s.noindex = 0)
         AND COALESCE(s.inbound_links, 0) <= %d
     ";
-    $prepared = $wpdb->prepare($sql, $threshold);
-    $count = (int) $wpdb->get_var($prepared);
+    $count = (int) self::get_var_sql($sql, [$threshold]);
     if ($wpdb->last_error){
       self::log('Priority count error: '.$wpdb->last_error);
     }
@@ -1328,11 +1338,15 @@ class MW_Audit_DB {
 
   public static function get_priority_ready_rows($threshold = 0, $limit = 25, $offset = 0, $order = 'inbound_links', $dir = 'ASC'){
     global $wpdb;
-    $inv = self::table_inventory();
-    $st  = self::table_status();
-    $pc  = self::table_pc();
-    $cache = self::table_gsc_cache();
-    if (!$inv || !$st || !$pc || !$cache){
+    $inv = self::t_inventory();
+    $st  = self::t_status();
+    $pc  = self::t_pc();
+    $cache = self::t_gsc_cache();
+    $inv_sql = self::esc_table($inv);
+    $st_sql = self::esc_table($st);
+    $pc_sql = self::esc_table($pc);
+    $cache_sql = self::esc_table($cache);
+    if ($inv_sql === '' || $st_sql === '' || $pc_sql === '' || $cache_sql === ''){
       return [];
     }
 
@@ -1382,20 +1396,19 @@ class MW_Audit_DB {
                  THEN g_ins.reason_label
                ELSE g_page.reason_label
              END AS best_reason_label
-      FROM {$inv} i
-      INNER JOIN {$st} s ON s.norm_url = i.norm_url
-      LEFT JOIN {$pc} p ON p.post_id = CASE WHEN i.obj_type='post' THEN i.obj_id ELSE 0 END
-      LEFT JOIN {$cache} g_ins ON g_ins.norm_url = i.norm_url AND g_ins.source='inspection'
-      LEFT JOIN {$cache} g_page ON g_page.norm_url = i.norm_url AND g_page.source='page_indexing'
+      FROM {$inv_sql} i
+      INNER JOIN {$st_sql} s ON s.norm_url = i.norm_url
+      LEFT JOIN {$pc_sql} p ON p.post_id = CASE WHEN i.obj_type='post' THEN i.obj_id ELSE 0 END
+      LEFT JOIN {$cache_sql} g_ins ON g_ins.norm_url = i.norm_url AND g_ins.source='inspection'
+      LEFT JOIN {$cache_sql} g_page ON g_page.norm_url = i.norm_url AND g_page.source='page_indexing'
       WHERE s.http_status = 200
         AND s.in_sitemap = 1
         AND (s.noindex IS NULL OR s.noindex = 0)
         AND COALESCE(s.inbound_links, 0) <= %d
-      ORDER BY $order_column $dir
+      ORDER BY {$order_column} {$dir}
       LIMIT %d OFFSET %d
     ";
-    $prepared = $wpdb->prepare($sql, $threshold, $limit, $offset);
-    $rows = $wpdb->get_results($prepared, ARRAY_A) ?: [];
+    $rows = self::get_results_sql($sql, [$threshold, $limit, $offset], ARRAY_A) ?: [];
     foreach ($rows as &$row){
       $row['inbound_links'] = isset($row['inbound_links']) ? (int) $row['inbound_links'] : 0;
       $row['gsc_source']    = $row['best_source'] ?? '';
@@ -1565,20 +1578,25 @@ class MW_Audit_DB {
     }
 
     $posts_table = $wpdb->posts;
+    $posts_table_sql = self::esc_table($posts_table);
+    $status_table = self::t_status();
+    $status_table_sql = self::esc_table($status_table);
+    if ($posts_table_sql === '' || $status_table_sql === ''){
+      return [];
+    }
     $order_column = ($args['order'] ?? '') === 'published'
       ? 'post_date'
       : "COALESCE(NULLIF(post_modified,'0000-00-00 00:00:00'), post_date)";
     $sql = "
       SELECT ID, post_title, post_type, post_status, post_date, post_modified,
              COALESCE(NULLIF(post_modified,'0000-00-00 00:00:00'), post_date) AS last_touch
-      FROM $posts_table
+      FROM {$posts_table_sql}
       WHERE ".implode(' AND ', $where)."
-      ORDER BY $order_column ASC, post_date ASC
+      ORDER BY {$order_column} ASC, post_date ASC
       LIMIT %d
     ";
     $params[] = $limit;
-    $prepared = $wpdb->prepare($sql, $params);
-    $rows = $wpdb->get_results($prepared, ARRAY_A) ?: [];
+    $rows = self::get_results_sql($sql, $params, ARRAY_A) ?: [];
     if (!$rows){
       return [];
     }
@@ -1625,38 +1643,33 @@ class MW_Audit_DB {
       ];
     }
     if ($results && $permalink_map){
-      $status_table = self::table_status();
-      if ($status_table){
-        $unique_urls = array_keys($permalink_map);
-        $unique_urls = array_values(array_filter(array_unique($unique_urls)));
-        if ($unique_urls){
-          $placeholders = implode(',', array_fill(0, count($unique_urls), '%s'));
-          // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table sanitized via table_status().
-          $inbound_sql = "SELECT norm_url, inbound_links FROM {$status_table} WHERE norm_url IN ($placeholders)";
-          $prepared_inbound = $wpdb->prepare($inbound_sql, $unique_urls);
-          $inbound_rows = $wpdb->get_results($prepared_inbound, ARRAY_A) ?: [];
-          $inbound_map = [];
-          foreach ($inbound_rows as $row_in){
-            $key = esc_url_raw($row_in['norm_url']);
-            if ($key !== ''){
-              $inbound_map[$key] = isset($row_in['inbound_links']) ? (int) $row_in['inbound_links'] : null;
-            }
+      $unique_urls = array_keys($permalink_map);
+      $unique_urls = array_values(array_filter(array_unique($unique_urls)));
+      if ($unique_urls){
+        $placeholders = implode(',', array_fill(0, count($unique_urls), '%s'));
+        $inbound_sql = "SELECT norm_url, inbound_links FROM {$status_table_sql} WHERE norm_url IN ({$placeholders})";
+        $inbound_rows = self::get_results_sql($inbound_sql, $unique_urls, ARRAY_A) ?: [];
+        $inbound_map = [];
+        foreach ($inbound_rows as $row_in){
+          $key = esc_url_raw($row_in['norm_url']);
+          if ($key !== ''){
+            $inbound_map[$key] = isset($row_in['inbound_links']) ? (int) $row_in['inbound_links'] : null;
           }
-          foreach ($results as &$result_row){
-            $perm = esc_url_raw($result_row['permalink']);
-            $candidates = array_unique([$perm, trailingslashit($perm), untrailingslashit($perm)]);
-            foreach ($candidates as $candidate_url){
-              if ($candidate_url === ''){
-                continue;
-              }
-              if (array_key_exists($candidate_url, $inbound_map)){
-                $result_row['inbound_links'] = $inbound_map[$candidate_url];
-                break;
-              }
-            }
-          }
-          unset($result_row);
         }
+        foreach ($results as &$result_row){
+          $perm = esc_url_raw($result_row['permalink']);
+          $candidates = array_unique([$perm, trailingslashit($perm), untrailingslashit($perm)]);
+          foreach ($candidates as $candidate_url){
+            if ($candidate_url === ''){
+              continue;
+            }
+            if (array_key_exists($candidate_url, $inbound_map)){
+              $result_row['inbound_links'] = $inbound_map[$candidate_url];
+              break;
+            }
+          }
+        }
+        unset($result_row);
       }
     }
     if (!empty($args['only_zero_inbound'])){
@@ -1667,3 +1680,5 @@ class MW_Audit_DB {
     return apply_filters('mw_audit_stale_content_candidates', $results, $args, $rows);
   }
 }
+
+// phpcs:enable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching

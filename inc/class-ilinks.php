@@ -134,10 +134,13 @@ class MW_Audit_ILinks {
       return (int) $cached;
     }
 
-    global $wpdb;
     $post_types = self::get_post_types();
     $type_placeholders = implode(',', array_fill(0, count($post_types), '%s'));
-    $sql = "SELECT ID, post_content FROM {$wpdb->posts} WHERE post_status = 'publish' AND post_type IN ($type_placeholders)";
+    $posts_table = MW_Audit_DB::esc_table(MW_Audit_DB::posts_table());
+    if ($posts_table === ''){
+      return 0;
+    }
+    $sql = "SELECT ID, post_content FROM {$posts_table} WHERE post_status = 'publish' AND post_type IN ($type_placeholders)";
     $params = $post_types;
 
     $patterns = self::build_lookup_patterns($targets);
@@ -145,14 +148,13 @@ class MW_Audit_ILinks {
       $clauses = [];
       foreach ($patterns as $p){
         $clauses[] = 'post_content LIKE %s';
-        $params[] = '%' . $wpdb->esc_like($p) . '%';
+        $params[] = '%' . MW_Audit_DB::esc_like($p) . '%';
       }
       $sql .= ' AND ('.implode(' OR ', $clauses).')';
     }
     $sql .= ' LIMIT 2000';
-
-    $prepared = $wpdb->prepare($sql, ...$params);
-    $posts = $wpdb->get_results($prepared);
+    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.NoCaching
+    $posts = MW_Audit_DB::get_results_sql($sql, $params, OBJECT);
 
     $count = 0;
     if ($posts){

@@ -8,6 +8,8 @@ class MW_Audit_GSC {
   const OPTION_QUOTA_LOG = 'quota_log';
   const CACHE_PREFIX  = 'mw_audit_gsc_idx_';
   const CACHE_TTL     = DAY_IN_SECONDS;
+  const ROW_CACHE_GROUP = 'mw_audit_gsc_rows';
+  const ROW_CACHE_TTL   = 300;
   const DEFAULT_TTL_HOURS = 48;
   const TTL_CHOICES = [24, 48, 72, 168];
   const SCOPE_GSC   = 'https://www.googleapis.com/auth/webmasters.readonly';
@@ -168,6 +170,25 @@ class MW_Audit_GSC {
     return $sanitized;
   }
 
+  private static function cache_key_for($source, $norm){
+    return strtolower($source).'|'.$norm;
+  }
+
+  private static function get_cached_row($source, $norm, &$found = null){
+    $key = self::cache_key_for($source, $norm);
+    $cached = wp_cache_get($key, self::ROW_CACHE_GROUP, false, $found);
+    if ($found){
+      return $cached ?: null;
+    }
+    return null;
+  }
+
+  private static function set_cached_row($source, $norm, $row){
+    $key = self::cache_key_for($source, $norm);
+    $value = $row ?: false;
+    wp_cache_set($key, $value, self::ROW_CACHE_GROUP, self::ROW_CACHE_TTL);
+  }
+
   private static function sanitize_cache_payload(array $data){
     $clean = [];
     $map = [
@@ -217,47 +238,34 @@ class MW_Audit_GSC {
     return $row;
   }
 
-  private static function get_cache_table(){
-    static $table = null;
-    if ($table !== null){
-      return $table;
-    }
-    $table = MW_Audit_DB::esc_table(MW_Audit_DB::t_gsc_cache());
-    return $table;
-  }
-
   public static function get_cache_row($url, $source = 'inspection'){
-    global $wpdb;
-    $table = self::get_cache_table();
-    if (!$table){
-      return null;
-    }
+    $table = MW_Audit_DB::esc_table(MW_Audit_DB::t_gsc_cache());
     $norm = self::normalize_cache_url($url);
     if ($norm === ''){
       return null;
     }
     $source = self::normalize_source_key($source);
-    $row = $wpdb->get_row(
-      $wpdb->prepare(
-        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name sanitized via get_cache_table().
-        "SELECT * FROM {$table} WHERE norm_url=%s AND source=%s LIMIT 1",
-        $norm,
-        $source
-      ),
-      ARRAY_A
-    );
-    if ($wpdb->last_error){
-      MW_Audit_DB::log('GSC cache fetch error: '.$wpdb->last_error);
+    $cache_hit = false;
+    $cached = self::get_cached_row($source, $norm, $cache_hit);
+    if ($cache_hit){
+      return $cached;
     }
-    return self::format_cache_row($row);
+    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.NoCaching
+    $row = MW_Audit_DB::get_row_sql(
+      "SELECT * FROM {$table} WHERE norm_url=%s AND source=%s LIMIT 1",
+      [$norm, $source]
+    );
+    $db_error = MW_Audit_DB::last_error();
+    if ($db_error){
+      MW_Audit_DB::log('GSC cache fetch error: '.$db_error);
+    }
+    $formatted = self::format_cache_row($row);
+    self::set_cached_row($source, $norm, $formatted);
+    return $formatted;
   }
 
   public static function get_cache_rows(array $urls, $source = 'inspection'){
-    global $wpdb;
-    $table = self::get_cache_table();
-    if (!$table){
-      return [];
-    }
+    $table = MW_Audit_DB::esc_table(MW_Audit_DB::t_gsc_cache());
     $norms = [];
     foreach ($urls as $url){
       $norm = self::normalize_cache_url($url);
@@ -269,19 +277,49 @@ class MW_Audit_GSC {
       return [];
     }
     $source = self::normalize_source_key($source);
-    $placeholders = implode(',', array_fill(0, count($norms), '%s'));
-    $query = $wpdb->prepare(
-      // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name sanitized via get_cache_table().
-      "SELECT * FROM {$table} WHERE source=%s AND norm_url IN ($placeholders)",
-      array_merge([$source], array_keys($norms))
-    );
-    $rows = $wpdb->get_results($query, ARRAY_A);
-    if ($wpdb->last_error){
-      MW_Audit_DB::log('GSC cache multi fetch error: '.$wpdb->last_error);
-    }
     $result = [];
-    foreach ($rows as $row){
-      $result[$row['norm_url']] = self::format_cache_row($row);
+    $missing = [];
+    foreach (array_keys($norms) as $norm){
+      $cache_hit = false;
+      $cached = self::get_cached_row($source, $norm, $cache_hit);
+      if ($cache_hit){
+        if ($cached){
+          $result[$norm] = $cached;
+        }
+        continue;
+      }
+      $missing[] = $norm;
+    }
+    if ($missing){
+      $placeholders = implode(',', array_fill(0, count($missing), '%s'));
+      $params = array_merge([$source], $missing);
+      // phpcs:ignore WordPress.DB.DirectDatabaseQuery.NoCaching
+      $rows = MW_Audit_DB::get_results_sql(
+        "SELECT * FROM {$table} WHERE source=%s AND norm_url IN ($placeholders)",
+        $params
+      );
+      $db_error = MW_Audit_DB::last_error();
+      if ($db_error){
+        MW_Audit_DB::log('GSC cache multi fetch error: '.$db_error);
+      }
+      if (is_array($rows)){
+        foreach ($rows as $row){
+          $norm = isset($row['norm_url']) ? (string) $row['norm_url'] : '';
+          if ($norm === ''){
+            continue;
+          }
+          $formatted = self::format_cache_row($row);
+          self::set_cached_row($source, $norm, $formatted);
+          if ($formatted){
+            $result[$norm] = $formatted;
+          }
+        }
+      }
+      foreach ($missing as $norm){
+        if (!isset($result[$norm])){
+          self::set_cached_row($source, $norm, null);
+        }
+      }
     }
     return $result;
   }
@@ -301,11 +339,7 @@ class MW_Audit_GSC {
   }
 
   public static function upsert_cache_row($url, array $data, $source = 'inspection'){
-    global $wpdb;
-    $table = self::get_cache_table();
-    if (!$table){
-      return false;
-    }
+    $table = MW_Audit_DB::t_gsc_cache();
     $norm = self::normalize_cache_url($url);
     if ($norm === ''){
       return false;
@@ -318,11 +352,15 @@ class MW_Audit_GSC {
       'norm_url' => $norm,
       'source'   => self::normalize_source_key($source),
     ], $clean);
-    $result = $wpdb->replace($table, $payload);
-    if ($result === false && $wpdb->last_error){
-      MW_Audit_DB::log('GSC cache upsert error: '.$wpdb->last_error);
+    $result = MW_Audit_DB::replace_row($table, $payload);
+    if ($result === false && MW_Audit_DB::last_error()){
+      MW_Audit_DB::log('GSC cache upsert error: '.MW_Audit_DB::last_error());
+      self::set_cached_row($payload['source'], $norm, null);
+      return false;
     }
-    return $result !== false;
+    $formatted = self::format_cache_row($payload);
+    self::set_cached_row($payload['source'], $norm, $formatted);
+    return true;
   }
 
   public static function mark_inspection_success($url, array $result){
@@ -635,43 +673,26 @@ class MW_Audit_GSC {
   }
 
   private static function read_csv_rows($file_path, $delimiter = ','){
-    $rows = [];
-    $contents = self::get_file_contents($file_path);
-    if ($contents === ''){
-      return $rows;
+    $filesystem = self::get_filesystem();
+    if (!$filesystem || !$filesystem->exists($file_path) || !$filesystem->is_readable($file_path)){
+      return [];
     }
-    $temp = new SplTempFileObject();
-    $temp->setFlags(SplFileObject::READ_CSV);
-    $temp->setCsvControl($delimiter);
-    $temp->fwrite($contents);
-    $temp->rewind();
-    foreach ($temp as $data){
-      if ($data === false || $data === null){
+    $contents = $filesystem->get_contents($file_path);
+    if ($contents === false || $contents === ''){
+      return [];
+    }
+    if (strncmp($contents, "\xEF\xBB\xBF", 3) === 0){
+      $contents = substr($contents, 3);
+    }
+    $lines = preg_split("/\r\n|\r|\n/", $contents);
+    $rows = [];
+    foreach ($lines as $line){
+      if ($line === ''){
         continue;
       }
-      if (count($data) === 1 && $data[0] === null){
-        continue;
-      }
-      $rows[] = $data;
+      $rows[] = str_getcsv($line, $delimiter);
     }
     return $rows;
-  }
-
-  private static function get_file_contents($file_path){
-    if (!function_exists('WP_Filesystem')){
-      require_once ABSPATH.'wp-admin/includes/file.php';
-    }
-    global $wp_filesystem;
-    if (!is_object($wp_filesystem)){
-      if (!WP_Filesystem()){
-        return '';
-      }
-    }
-    if (!is_object($wp_filesystem) || !$wp_filesystem->exists($file_path) || !$wp_filesystem->is_readable($file_path)){
-      return '';
-    }
-    $contents = $wp_filesystem->get_contents($file_path);
-    return is_string($contents) ? $contents : '';
   }
 
   private static function csv_is_single_column(array $rows){
@@ -1164,10 +1185,10 @@ class MW_Audit_GSC {
     if (!self::is_configured()){
       wp_die(esc_html__('Google Search Console credentials are not configured.','merchant-wiki-audit'));
     }
-    $state_raw = isset($_GET['state']) ? wp_unslash($_GET['state']) : null; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- OAuth callback cannot include nonce.
-    $state = $state_raw ? sanitize_key($state_raw) : 'default';
-    $code_raw = isset($_GET['code']) ? wp_unslash($_GET['code']) : null; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- OAuth callback cannot include nonce.
-    $code = $code_raw ? sanitize_text_field($code_raw) : '';
+    $state = filter_input(INPUT_GET, 'state', FILTER_UNSAFE_RAW, FILTER_NULL_ON_FAILURE);
+    $state = $state ? sanitize_key($state) : 'default';
+    $code_param = filter_input(INPUT_GET, 'code', FILTER_UNSAFE_RAW, FILTER_NULL_ON_FAILURE);
+    $code = $code_param ? sanitize_text_field($code_param) : '';
     if (!$code){
       wp_die(esc_html__('Missing authorization code.','merchant-wiki-audit'));
     }
@@ -1183,10 +1204,13 @@ class MW_Audit_GSC {
       'body'    => $body,
     ]);
     if (is_wp_error($response)){
-      wp_die(
-        esc_html__('Failed to exchange authorization code: ','merchant-wiki-audit') .
-        esc_html($response->get_error_message())
+      $error_message = sanitize_text_field($response->get_error_message());
+      $message = sprintf(
+        /* translators: %s: WordPress HTTP error message. */
+        __('Failed to exchange authorization code: %s','merchant-wiki-audit'),
+        $error_message
       );
+      wp_die(esc_html($message));
     }
     $code_http = (int) wp_remote_retrieve_response_code($response);
     $data = json_decode(wp_remote_retrieve_body($response), true);
@@ -1312,16 +1336,12 @@ class MW_Audit_GSC {
     $ttl_hours = self::get_api_ttl_hours();
 
     foreach ($urls as $url){
-      $safe_url_label = esc_url_raw($url);
-      if ($safe_url_label === ''){
-        $safe_url_label = esc_html($url);
-      }
       $norm = self::normalize_cache_url($url);
       if ($norm === ''){
         $message = sprintf(
-          /* translators: %s: URL provided for inspection */
-          __('Invalid URL provided: %1$s','merchant-wiki-audit'),
-          $safe_url_label
+          /* translators: %s: invalid URL provided by the user. */
+          __('Invalid URL provided: %s','merchant-wiki-audit'),
+          esc_html($url)
         );
         $results[$url] = ['indexed'=>null,'error'=>$message];
         $errors[] = $message;
@@ -1370,9 +1390,9 @@ class MW_Audit_GSC {
       $meta['api_calls']++;
       if (is_wp_error($response)){
         $message = sprintf(
-          /* translators: 1: URL being inspected, 2: error message text */
+          /* translators: 1: inspected URL, 2: error details. */
           __('Error inspecting %1$s: %2$s','merchant-wiki-audit'),
-          $safe_url_label,
+          $url,
           $response->get_error_message()
         );
         $results[$url] = ['indexed'=>null,'error'=>$message,'source'=>'inspection'];
@@ -1387,9 +1407,9 @@ class MW_Audit_GSC {
         $message = isset($data['error']['message']) ? $data['error']['message'] : wp_remote_retrieve_body($response);
         $results[$url] = ['indexed'=>null,'error'=>$message,'source'=>'inspection'];
         $errors[] = sprintf(
-          /* translators: 1: URL being inspected, 2: error message text */
+          /* translators: 1: inspected URL, 2: error details. */
           __('Error inspecting %1$s: %2$s','merchant-wiki-audit'),
-          $safe_url_label,
+          $url,
           $message
         );
         if ($code === 401 || $code === 403){
@@ -1428,15 +1448,39 @@ class MW_Audit_GSC {
   }
 
   public static function clear_index_cache(){
-    global $wpdb;
     $like = '_transient_'.self::CACHE_PREFIX.'%';
     $timeout_like = '_transient_timeout_'.self::CACHE_PREFIX.'%';
-    $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", $like));
-    $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", $timeout_like));
-    $cache_table = self::get_cache_table();
-    if ($cache_table){
-      // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name sanitized via get_cache_table().
-      $wpdb->query("TRUNCATE TABLE {$cache_table}");
+    $options_table = MW_Audit_DB::esc_table(MW_Audit_DB::options_table());
+    if ($options_table !== ''){
+      // phpcs:ignore WordPress.DB.DirectDatabaseQuery.NoCaching
+      MW_Audit_DB::query_sql("DELETE FROM {$options_table} WHERE option_name LIKE %s", [$like]);
+      // phpcs:ignore WordPress.DB.DirectDatabaseQuery.NoCaching
+      MW_Audit_DB::query_sql("DELETE FROM {$options_table} WHERE option_name LIKE %s", [$timeout_like]);
     }
+    if (method_exists('MW_Audit_DB','t_gsc_cache')){
+      $cache_table = MW_Audit_DB::esc_table(MW_Audit_DB::t_gsc_cache());
+      if ($cache_table !== ''){
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange, WordPress.DB.DirectDatabaseQuery.NoCaching
+        MW_Audit_DB::query_sql("TRUNCATE TABLE {$cache_table}");
+      }
+    }
+  }
+
+  private static function get_filesystem(){
+    if (!function_exists('WP_Filesystem')){
+      require_once ABSPATH.'wp-admin/includes/file.php';
+    }
+    global $wp_filesystem;
+    if (!$wp_filesystem instanceof WP_Filesystem_Base){
+      WP_Filesystem();
+    }
+    if ($wp_filesystem instanceof WP_Filesystem_Base){
+      return $wp_filesystem;
+    }
+    if (!class_exists('WP_Filesystem_Direct', false)){
+      require_once ABSPATH.'wp-admin/includes/class-wp-filesystem-base.php';
+      require_once ABSPATH.'wp-admin/includes/class-wp-filesystem-direct.php';
+    }
+    return new WP_Filesystem_Direct(false);
   }
 }

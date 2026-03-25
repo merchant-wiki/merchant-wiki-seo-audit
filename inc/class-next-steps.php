@@ -4,18 +4,15 @@ if (!defined('ABSPATH')) exit;
 class MW_Audit_Next_Steps {
   const SNAPSHOT_OPTION = 'mw_audit_launch_snapshots';
   const SNAPSHOT_LIMIT  = 8;
+  const CACHE_GROUP     = 'mw_audit';
+  const CACHE_TTL       = 300;
 
   /**
    * Quick technical audit dataset (group blockers by issue_code)
    */
   public static function quick_audit_rows(){
-    global $wpdb;
-    $inv = MW_Audit_DB::table_inventory_name();
-    $st  = MW_Audit_DB::table_status_name();
-    if (!$inv || !$st){
-      return [];
-    }
-    // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- tables sanitized via MW_Audit_DB::table_*.
+    $inv = MW_Audit_DB::esc_table(MW_Audit_DB::t_inventory());
+    $st  = MW_Audit_DB::esc_table(MW_Audit_DB::t_status());
     $sql = "
       SELECT i.norm_url,
              s.id AS status_id,
@@ -28,14 +25,17 @@ class MW_Audit_Next_Steps {
              s.updated_at
       FROM {$inv} i
       LEFT JOIN {$st} s ON s.norm_url = i.norm_url
-      WHERE s.id IS NULL
+      WHERE (
+         s.id IS NULL
          OR s.http_status IS NULL
          OR s.http_status <> 200
          OR COALESCE(s.in_sitemap, 0) = 0
          OR s.noindex = 1
+      )
+        AND %d = %d
       ORDER BY i.norm_url ASC
     ";
-    $rows = $wpdb->get_results($sql, ARRAY_A) ?: [];
+    $rows = self::query_cached('quick_audit', $sql, [1, 1]);
     $issues = [];
     foreach ($rows as $row){
       foreach (self::detect_quick_issues($row) as $issue_row){
@@ -49,16 +49,13 @@ class MW_Audit_Next_Steps {
    * Manual indexing queue dataset (after hitting Inspection API quota)
    */
   public static function manual_index_rows($threshold = 0){
-    global $wpdb;
     $threshold = max(0, (int) $threshold);
-    $inv = MW_Audit_DB::table_inventory_name();
-    $st  = MW_Audit_DB::table_status_name();
-    $cache = MW_Audit_DB::table_gsc_cache_name();
-    if (!$inv || !$st || !$cache){
-      return [];
-    }
-    $cache_has_reason   = MW_Audit_DB::table_has_column($cache, 'reason_label');
-    $cache_has_pi       = MW_Audit_DB::table_has_column($cache, 'pi_reason_raw');
+    $inv = MW_Audit_DB::esc_table(MW_Audit_DB::t_inventory());
+    $st  = MW_Audit_DB::esc_table(MW_Audit_DB::t_status());
+    $cache_table = MW_Audit_DB::t_gsc_cache();
+    $cache = MW_Audit_DB::esc_table($cache_table);
+    $cache_has_reason   = MW_Audit_DB::table_has_column($cache_table, 'reason_label');
+    $cache_has_pi       = MW_Audit_DB::table_has_column($cache_table, 'pi_reason_raw');
     $likely_states = [];
     if (class_exists('MW_Audit_GSC') && method_exists('MW_Audit_GSC','get_likely_not_indexed_reasons')){
       $likely_states = array_filter((array) MW_Audit_GSC::get_likely_not_indexed_reasons());
@@ -70,7 +67,6 @@ class MW_Audit_Next_Steps {
       $state_clause = "OR g_ins.coverage_state IN ($placeholders) OR g_page.coverage_state IN ($placeholders)";
       $params = array_merge($params, $likely_states, $likely_states);
     }
-    // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- tables sanitized via MW_Audit_DB::table_*.
     $sql = "
       SELECT i.norm_url,
              s.http_status,
@@ -101,8 +97,8 @@ class MW_Audit_Next_Steps {
         )
       ORDER BY COALESCE(s.inbound_links, 0) ASC, i.norm_url ASC
     ";
-    $prepared = $wpdb->prepare($sql, $params);
-    $rows = $wpdb->get_results($prepared, ARRAY_A) ?: [];
+    $cache_key = 'manual_index_'.md5($threshold.'|'.implode('|', $likely_states));
+    $rows = self::query_cached($cache_key, $sql, $params);
     $output = [];
     foreach ($rows as $row){
       $output[] = self::build_manual_row($row);
@@ -114,16 +110,12 @@ class MW_Audit_Next_Steps {
    * Content pruning dataset (find crawl budget drains)
    */
   public static function content_pruning_rows(){
-    global $wpdb;
-    $inv = MW_Audit_DB::table_inventory_name();
-    $st  = MW_Audit_DB::table_status_name();
-    $out = MW_Audit_DB::table_outbound_name();
-    $cache = MW_Audit_DB::table_gsc_cache_name();
-    if (!$inv || !$st || !$out || !$cache){
-      return [];
-    }
-    $cache_has_reason = MW_Audit_DB::table_has_column($cache, 'reason_label');
-    // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- tables sanitized via MW_Audit_DB::table_*.
+    $inv = MW_Audit_DB::esc_table(MW_Audit_DB::t_inventory());
+    $st  = MW_Audit_DB::esc_table(MW_Audit_DB::t_status());
+    $out = MW_Audit_DB::esc_table(MW_Audit_DB::t_outbound());
+    $cache_table = MW_Audit_DB::t_gsc_cache();
+    $cache = MW_Audit_DB::esc_table($cache_table);
+    $cache_has_reason = MW_Audit_DB::table_has_column($cache_table, 'reason_label');
     $sql = "
       SELECT i.norm_url,
              s.http_status,
@@ -153,9 +145,10 @@ class MW_Audit_Next_Steps {
           OR g_ins.coverage_state IS NOT NULL
           OR g_page.coverage_state IS NOT NULL
         )
+        AND %d = %d
       ORDER BY COALESCE(ob.outbound_external_domains,0) DESC, i.norm_url ASC
     ";
-    $rows = $wpdb->get_results($sql, ARRAY_A) ?: [];
+    $rows = self::query_cached('pruning', $sql, [1, 1]);
     $output = [];
     foreach ($rows as $row){
       $output[] = self::build_pruning_row($row);
@@ -167,13 +160,8 @@ class MW_Audit_Next_Steps {
    * Snapshot rows covering HTTP/canonical state
    */
   public static function snapshot_rows(){
-    global $wpdb;
-    $inv = MW_Audit_DB::table_inventory_name();
-    $st  = MW_Audit_DB::table_status_name();
-    if (!$inv || !$st){
-      return [];
-    }
-    // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- tables sanitized via MW_Audit_DB::table_*.
+    $inv = MW_Audit_DB::esc_table(MW_Audit_DB::t_inventory());
+    $st  = MW_Audit_DB::esc_table(MW_Audit_DB::t_status());
     $sql = "
       SELECT i.norm_url,
              s.http_status,
@@ -184,9 +172,10 @@ class MW_Audit_Next_Steps {
              s.updated_at
       FROM {$inv} i
       LEFT JOIN {$st} s ON s.norm_url = i.norm_url
+      WHERE %d = %d
       ORDER BY i.norm_url ASC
     ";
-    return $wpdb->get_results($sql, ARRAY_A) ?: [];
+    return self::query_cached('snapshots', $sql, [1, 1]);
   }
 
   public static function create_snapshot($label = ''){
@@ -200,11 +189,8 @@ class MW_Audit_Next_Steps {
     }
     $label = trim((string) $label);
     if ($label === ''){
-      $label = sprintf(
-        /* translators: %s: snapshot timestamp */
-        __('Snapshot %s','merchant-wiki-audit'),
-        current_time('Y-m-d H:i')
-      );
+      /* translators: %s is replaced with the localized snapshot timestamp. */
+      $label = sprintf(__('Snapshot %s','merchant-wiki-audit'), current_time('Y-m-d H:i'));
     }
     $id = 'launch-'.gmdate('Ymd-Hi');
     $filename = $id.'.json.gz';
@@ -214,8 +200,12 @@ class MW_Audit_Next_Steps {
       return new WP_Error('mw_audit_snapshot_encode', __('Unable to encode snapshot JSON.','merchant-wiki-audit'));
     }
     $gz = function_exists('gzencode') ? gzencode($payload, 6) : $payload;
-    $written = file_put_contents($path, $gz);
-    if ($written === false){
+    $filesystem = self::get_filesystem();
+    if (!$filesystem){
+      return new WP_Error('mw_audit_snapshot_write', __('Unable to initialize the filesystem API.','merchant-wiki-audit'));
+    }
+    $chmod = defined('FS_CHMOD_FILE') ? FS_CHMOD_FILE : null;
+    if (!$filesystem->put_contents($path, $gz, $chmod)){
       return new WP_Error('mw_audit_snapshot_write', __('Unable to write snapshot file.','merchant-wiki-audit'));
     }
     $meta = [
@@ -332,8 +322,7 @@ class MW_Audit_Next_Steps {
   public static function action_export_manual(){
     self::ensure_capability();
     check_admin_referer('mw_next_steps_manual');
-    $threshold_raw = filter_input(INPUT_POST, 'threshold', FILTER_SANITIZE_NUMBER_INT);
-    $threshold = is_numeric($threshold_raw) ? (int) $threshold_raw : 0;
+    $threshold = isset($_POST['threshold']) ? absint(wp_unslash($_POST['threshold'])) : 0;
     $rows = self::manual_index_rows($threshold);
     $filename = sprintf('mw-manual-indexing-%dlinks.csv', $threshold);
     self::stream_csv($filename, self::manual_header(), $rows);
@@ -351,19 +340,18 @@ class MW_Audit_Next_Steps {
   public static function action_create_snapshot(){
     self::ensure_capability();
     check_admin_referer('mw_next_steps_snapshot');
-    $label_raw = filter_input(INPUT_POST, 'snapshot_label', FILTER_SANITIZE_SPECIAL_CHARS);
-    $label = $label_raw ? sanitize_text_field($label_raw) : '';
+    $label = isset($_POST['snapshot_label']) ? sanitize_text_field(wp_unslash($_POST['snapshot_label'])) : '';
     $result = self::create_snapshot($label);
     $redirect = menu_page_url('mw-site-index-reports', false);
     if (!$redirect){
       $redirect = admin_url('admin.php?page=mw-site-index-reports');
     }
     if (is_wp_error($result)){
-      wp_safe_redirect(add_query_arg('mw_snapshot_error', rawurlencode($result->get_error_message()), $redirect));
+      wp_safe_redirect(add_query_arg('mw_snapshot_error', $result->get_error_message(), $redirect));
       exit;
     }
     wp_safe_redirect(add_query_arg([
-      'mw_snapshot_created' => rawurlencode($result['label']),
+      'mw_snapshot_created' => $result['label'],
       'mw_snapshot_rows'    => (int) $result['rows'],
     ], $redirect));
     exit;
@@ -373,21 +361,19 @@ class MW_Audit_Next_Steps {
   public static function action_diff_snapshots(){
     self::ensure_capability();
     check_admin_referer('mw_next_steps_diff');
-    $older_raw = filter_input(INPUT_POST, 'snapshot_old', FILTER_SANITIZE_SPECIAL_CHARS);
-    $older = $older_raw ? sanitize_text_field($older_raw) : '';
-    $newer_raw = filter_input(INPUT_POST, 'snapshot_new', FILTER_SANITIZE_SPECIAL_CHARS);
-    $newer = $newer_raw ? sanitize_text_field($newer_raw) : '';
+    $older = isset($_POST['snapshot_old']) ? sanitize_text_field(wp_unslash($_POST['snapshot_old'])) : '';
+    $newer = isset($_POST['snapshot_new']) ? sanitize_text_field(wp_unslash($_POST['snapshot_new'])) : '';
     $redirect = menu_page_url('mw-site-index-reports', false);
     if (!$redirect){
       $redirect = admin_url('admin.php?page=mw-site-index-reports');
     }
     if (!$older || !$newer || $older === $newer){
-      wp_safe_redirect(add_query_arg('mw_snapshot_error', rawurlencode(__('Choose two different snapshots to compare.','merchant-wiki-audit')), $redirect));
+      wp_safe_redirect(add_query_arg('mw_snapshot_error', __('Choose two different snapshots to compare.','merchant-wiki-audit'), $redirect));
       exit;
     }
     $rows = self::diff_snapshots_rows($older, $newer);
     if (is_wp_error($rows)){
-      wp_safe_redirect(add_query_arg('mw_snapshot_error', rawurlencode($rows->get_error_message()), $redirect));
+      wp_safe_redirect(add_query_arg('mw_snapshot_error', $rows->get_error_message(), $redirect));
       exit;
     }
     $filename = sprintf('mw-launch-diff-%s-vs-%s.csv', $older, $newer);
@@ -402,27 +388,16 @@ class MW_Audit_Next_Steps {
     if (!is_dir($dir)){
       wp_mkdir_p($dir);
     }
-    $fh = fopen($path, 'w');
-    if (!$fh){
-      return new WP_Error(
-        'mw_next_steps_csv',
-        sprintf(
-          /* translators: %s: file path */
-          __('Unable to open %s for writing.','merchant-wiki-audit'),
-          $path
-        )
-      );
+    $filesystem = self::get_filesystem();
+    if (!$filesystem){
+      return new WP_Error('mw_next_steps_csv', __('Unable to initialize the filesystem API.','merchant-wiki-audit'));
     }
-    $keys = array_keys($header_map);
-    fputcsv($fh, array_values($header_map));
-    foreach ($rows as $row){
-      $line = [];
-      foreach ($keys as $key){
-        $line[] = isset($row[$key]) ? $row[$key] : '';
-      }
-      fputcsv($fh, $line);
+    $csv = self::format_csv($header_map, $rows);
+    $chmod = defined('FS_CHMOD_FILE') ? FS_CHMOD_FILE : null;
+    if (!$filesystem->put_contents($path, $csv, $chmod)){
+      /* translators: %s is a filesystem path on the current server. */
+      return new WP_Error('mw_next_steps_csv', sprintf(__('Unable to open %s for writing.','merchant-wiki-audit'), $path));
     }
-    fclose($fh);
     return $path;
   }
 
@@ -537,25 +512,19 @@ class MW_Audit_Next_Steps {
   }
 
   private static function stream_csv($filename, array $header_map, array $rows){
-    $keys = array_keys($header_map);
-    header('Content-Type: text/csv; charset=utf-8');
-    header('Content-Disposition: attachment; filename="'.$filename.'"');
-    $out = fopen('php://output', 'w');
-    fputcsv($out, array_values($header_map));
-    foreach ($rows as $row){
-      $line = [];
-      foreach ($keys as $key){
-        $line[] = isset($row[$key]) ? $row[$key] : '';
-      }
-      fputcsv($out, $line);
+    $safe_name = sanitize_file_name($filename);
+    if ($safe_name === ''){
+      $safe_name = 'mw-export.csv';
     }
-    fclose($out);
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="'.$safe_name.'"');
+    self::output_csv($header_map, $rows);
     exit;
   }
 
   private static function ensure_capability(){
     if (!current_user_can('manage_options')){
-      wp_die(__('Not allowed','merchant-wiki-audit'));
+      wp_die(esc_html__('Not allowed','merchant-wiki-audit'));
     }
   }
 
@@ -598,7 +567,11 @@ class MW_Audit_Next_Steps {
         if (!file_exists($path)){
           return new WP_Error('mw_audit_snapshot_missing', __('Snapshot file is missing.','merchant-wiki-audit'));
         }
-        $contents = file_get_contents($path);
+        $filesystem = self::get_filesystem();
+        if (!$filesystem){
+          return new WP_Error('mw_audit_snapshot_read', __('Unable to initialize the filesystem API.','merchant-wiki-audit'));
+        }
+        $contents = $filesystem->get_contents($path);
         if ($contents === false){
           return new WP_Error('mw_audit_snapshot_read', __('Unable to read snapshot file.','merchant-wiki-audit'));
         }
@@ -643,64 +616,136 @@ class MW_Audit_Next_Steps {
     return ((int) $value) ? '1' : '0';
   }
 
+  private static function output_csv(array $header_map, array $rows){
+    self::each_csv_row($header_map, $rows, static function($line){
+      echo $line, "\r\n"; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- streaming raw CSV, already sanitized in csv_line()
+    });
+  }
+
+  private static function format_csv(array $header_map, array $rows){
+    $lines = [];
+    self::each_csv_row($header_map, $rows, static function($line) use (&$lines){
+      $lines[] = $line;
+    });
+    return implode("\r\n", $lines)."\r\n";
+  }
+
+  private static function each_csv_row(array $header_map, array $rows, callable $handler){
+    $keys = array_keys($header_map);
+    $handler(self::csv_line(array_values($header_map)));
+    foreach ($rows as $row){
+      $line = [];
+      foreach ($keys as $key){
+        $line[] = isset($row[$key]) ? $row[$key] : '';
+      }
+      $handler(self::csv_line($line));
+    }
+  }
+
+  private static function csv_line(array $values){
+    $escaped = [];
+    foreach ($values as $value){
+      if (!is_scalar($value)){
+        $value = wp_json_encode($value);
+      }
+      $value = str_replace(["\r","\n"], ' ', (string) $value);
+      if (strpbrk($value, ',"') !== false){
+        $escaped[] = '"'.str_replace('"', '""', $value).'"';
+      } else {
+        $escaped[] = $value;
+      }
+    }
+    return implode(',', $escaped);
+  }
+
+  private static function get_filesystem(){
+    if (!function_exists('WP_Filesystem')){
+      require_once ABSPATH.'wp-admin/includes/file.php';
+    }
+    global $wp_filesystem;
+    if (!$wp_filesystem instanceof WP_Filesystem_Base){
+      WP_Filesystem();
+    }
+    if ($wp_filesystem instanceof WP_Filesystem_Base){
+      return $wp_filesystem;
+    }
+    if (!class_exists('WP_Filesystem_Direct', false)){
+      require_once ABSPATH.'wp-admin/includes/class-wp-filesystem-base.php';
+      require_once ABSPATH.'wp-admin/includes/class-wp-filesystem-direct.php';
+    }
+    return new WP_Filesystem_Direct(false);
+  }
+
+  private static function query_cached($cache_key, $sql, array $params = [], $output_type = ARRAY_A, $ttl = self::CACHE_TTL){
+    $cache_key = 'next_steps_'.$cache_key;
+    $found = false;
+    $cached = wp_cache_get($cache_key, self::CACHE_GROUP, false, $found);
+    if ($found){
+      return $cached;
+    }
+    $results = MW_Audit_DB::get_results_sql($sql, $params, $output_type) ?: [];
+    wp_cache_set($cache_key, $results, self::CACHE_GROUP, $ttl);
+    return $results;
+  }
+
   public static function quick_header(){
     return [
-      'ticket_group'   => __('Issue','merchant-wiki-audit'),
-      'priority'       => __('Priority','merchant-wiki-audit'),
-      'norm_url'       => __('URL','merchant-wiki-audit'),
-      'http_status'    => __('HTTP','merchant-wiki-audit'),
-      'in_sitemap'     => __('Sitemap','merchant-wiki-audit'),
-      'noindex'        => __('Noindex','merchant-wiki-audit'),
-      'canonical'      => __('Canonical','merchant-wiki-audit'),
-      'robots_meta'    => __('Robots','merchant-wiki-audit'),
-      'redirect_to'    => __('Redirect','merchant-wiki-audit'),
-      'last_signal_at' => __('Last signal','merchant-wiki-audit'),
-      'next_step'      => __('Next step','merchant-wiki-audit'),
+      'ticket_group'   => esc_html__('Issue','merchant-wiki-audit'),
+      'priority'       => esc_html__('Priority','merchant-wiki-audit'),
+      'norm_url'       => esc_html__('URL','merchant-wiki-audit'),
+      'http_status'    => esc_html__('HTTP','merchant-wiki-audit'),
+      'in_sitemap'     => esc_html__('Sitemap','merchant-wiki-audit'),
+      'noindex'        => esc_html__('Noindex','merchant-wiki-audit'),
+      'canonical'      => esc_html__('Canonical','merchant-wiki-audit'),
+      'robots_meta'    => esc_html__('Robots','merchant-wiki-audit'),
+      'redirect_to'    => esc_html__('Redirect','merchant-wiki-audit'),
+      'last_signal_at' => esc_html__('Last signal','merchant-wiki-audit'),
+      'next_step'      => esc_html__('Next step','merchant-wiki-audit'),
     ];
   }
 
   public static function manual_header(){
     return [
-      'queue_reason'      => __('Reason','merchant-wiki-audit'),
-      'norm_url'          => __('URL','merchant-wiki-audit'),
-      'http_status'       => __('HTTP','merchant-wiki-audit'),
-      'inbound_links'     => __('Inbound links','merchant-wiki-audit'),
-      'in_sitemap'        => __('Sitemap','merchant-wiki-audit'),
-      'indexed_in_google' => __('Indexed (local)','merchant-wiki-audit'),
-      'gsc_reason'        => __('GSC reason','merchant-wiki-audit'),
-      'gsc_pi_reason'     => __('Page indexing detail','merchant-wiki-audit'),
-      'gsc_checked'       => __('Last checked','merchant-wiki-audit'),
-      'evidence'          => __('Evidence','merchant-wiki-audit'),
-      'next_step'         => __('Next step','merchant-wiki-audit'),
+      'queue_reason'      => esc_html__('Reason','merchant-wiki-audit'),
+      'norm_url'          => esc_html__('URL','merchant-wiki-audit'),
+      'http_status'       => esc_html__('HTTP','merchant-wiki-audit'),
+      'inbound_links'     => esc_html__('Inbound links','merchant-wiki-audit'),
+      'in_sitemap'        => esc_html__('Sitemap','merchant-wiki-audit'),
+      'indexed_in_google' => esc_html__('Indexed (local)','merchant-wiki-audit'),
+      'gsc_reason'        => esc_html__('GSC reason','merchant-wiki-audit'),
+      'gsc_pi_reason'     => esc_html__('Page indexing detail','merchant-wiki-audit'),
+      'gsc_checked'       => esc_html__('Last checked','merchant-wiki-audit'),
+      'evidence'          => esc_html__('Evidence','merchant-wiki-audit'),
+      'next_step'         => esc_html__('Next step','merchant-wiki-audit'),
     ];
   }
 
   public static function pruning_header(){
     return [
-      'action'            => __('Action','merchant-wiki-audit'),
-      'norm_url'          => __('URL','merchant-wiki-audit'),
-      'http_status'       => __('HTTP','merchant-wiki-audit'),
-      'indexed_in_google' => __('Indexed (local)','merchant-wiki-audit'),
-      'inbound_links'     => __('Inbound links','merchant-wiki-audit'),
-      'outbound_internal' => __('Outbound internal','merchant-wiki-audit'),
-      'outbound_external' => __('Outbound external','merchant-wiki-audit'),
-      'external_domains'  => __('External domains','merchant-wiki-audit'),
-      'schema_type'       => __('Schema','merchant-wiki-audit'),
-      'robots_meta'       => __('Robots','merchant-wiki-audit'),
-      'gsc_reason'        => __('GSC signal','merchant-wiki-audit'),
-      'updated_at'        => __('Last refreshed','merchant-wiki-audit'),
-      'next_step'         => __('Next step','merchant-wiki-audit'),
+      'action'            => esc_html__('Action','merchant-wiki-audit'),
+      'norm_url'          => esc_html__('URL','merchant-wiki-audit'),
+      'http_status'       => esc_html__('HTTP','merchant-wiki-audit'),
+      'indexed_in_google' => esc_html__('Indexed (local)','merchant-wiki-audit'),
+      'inbound_links'     => esc_html__('Inbound links','merchant-wiki-audit'),
+      'outbound_internal' => esc_html__('Outbound internal','merchant-wiki-audit'),
+      'outbound_external' => esc_html__('Outbound external','merchant-wiki-audit'),
+      'external_domains'  => esc_html__('External domains','merchant-wiki-audit'),
+      'schema_type'       => esc_html__('Schema','merchant-wiki-audit'),
+      'robots_meta'       => esc_html__('Robots','merchant-wiki-audit'),
+      'gsc_reason'        => esc_html__('GSC signal','merchant-wiki-audit'),
+      'updated_at'        => esc_html__('Last refreshed','merchant-wiki-audit'),
+      'next_step'         => esc_html__('Next step','merchant-wiki-audit'),
     ];
   }
 
   public static function snapshot_diff_header(){
     return [
-      'change_type'    => __('Change','merchant-wiki-audit'),
-      'norm_url'       => __('URL','merchant-wiki-audit'),
-      'before'         => __('Before','merchant-wiki-audit'),
-      'after'          => __('After','merchant-wiki-audit'),
-      'before_checked' => __('Before timestamp','merchant-wiki-audit'),
-      'after_checked'  => __('After timestamp','merchant-wiki-audit'),
+      'change_type'    => esc_html__('Change','merchant-wiki-audit'),
+      'norm_url'       => esc_html__('URL','merchant-wiki-audit'),
+      'before'         => esc_html__('Before','merchant-wiki-audit'),
+      'after'          => esc_html__('After','merchant-wiki-audit'),
+      'before_checked' => esc_html__('Before timestamp','merchant-wiki-audit'),
+      'after_checked'  => esc_html__('After timestamp','merchant-wiki-audit'),
     ];
   }
 }

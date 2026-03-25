@@ -7,12 +7,13 @@ class MW_Audit_Health {
    * Pure read-only. No schema changes here.
    */
   public static function get(){
-    global $wpdb;
-
-    // Table names via helpers, or fall back to prefix if helpers missing
-    $inv_tbl = method_exists('MW_Audit_DB','table_inventory_name') ? MW_Audit_DB::table_inventory_name() : (method_exists('MW_Audit_DB','t_inventory') ? MW_Audit_DB::t_inventory() : $wpdb->prefix.'mw_url_inventory');
-    $st_tbl  = method_exists('MW_Audit_DB','table_status_name') ? MW_Audit_DB::table_status_name() : (method_exists('MW_Audit_DB','t_status') ? MW_Audit_DB::t_status() : $wpdb->prefix.'mw_url_status');
-    $pc_tbl  = method_exists('MW_Audit_DB','table_pc_name') ? MW_Audit_DB::table_pc_name() : (method_exists('MW_Audit_DB','t_pc') ? MW_Audit_DB::t_pc() : $wpdb->prefix.'mw_post_primary_category');
+    // Table names via helpers
+    $inv_tbl = MW_Audit_DB::t_inventory();
+    $st_tbl  = MW_Audit_DB::t_status();
+    $pc_tbl  = MW_Audit_DB::t_pc();
+    $inv_sql = MW_Audit_DB::esc_table($inv_tbl);
+    $st_sql  = MW_Audit_DB::esc_table($st_tbl);
+    $pc_sql  = MW_Audit_DB::esc_table($pc_tbl);
 
     // Loopback (best effort)
     $loop_ok = true;
@@ -21,14 +22,17 @@ class MW_Audit_Health {
 
     // Row counts (best effort if tables exist)
     $inventory_rows = 0; $status_rows = 0; $pc_rows = 0;
-    if ($inv_tbl && $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $inv_tbl))) {
-      $inventory_rows = (int)$wpdb->get_var("SELECT COUNT(*) FROM {$inv_tbl}");
+    if ($inv_sql && MW_Audit_DB::table_exists($inv_tbl)) {
+      // phpcs:ignore WordPress.DB.DirectDatabaseQuery.NoCaching
+      $inventory_rows = (int) MW_Audit_DB::get_var_sql("SELECT COUNT(*) FROM {$inv_sql}");
     }
-    if ($st_tbl && $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $st_tbl))) {
-      $status_rows = (int)$wpdb->get_var("SELECT COUNT(*) FROM {$st_tbl}");
+    if ($st_sql && MW_Audit_DB::table_exists($st_tbl)) {
+      // phpcs:ignore WordPress.DB.DirectDatabaseQuery.NoCaching
+      $status_rows = (int) MW_Audit_DB::get_var_sql("SELECT COUNT(*) FROM {$st_sql}");
     }
-    if ($pc_tbl && $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $pc_tbl))) {
-      $pc_rows = (int)$wpdb->get_var("SELECT COUNT(*) FROM {$pc_tbl}");
+    if ($pc_sql && MW_Audit_DB::table_exists($pc_tbl)) {
+      // phpcs:ignore WordPress.DB.DirectDatabaseQuery.NoCaching
+      $pc_rows = (int) MW_Audit_DB::get_var_sql("SELECT COUNT(*) FROM {$pc_sql}");
     }
 
     // Options
@@ -67,7 +71,7 @@ class MW_Audit_Health {
     $inv_started = $q_inv || (!empty($flags['inv']) && $flags['inv'] !== 'done');
     if ($inventory_rows > 0) $inv_state = 'ok';
     elseif ($inv_started || !empty($last_inv_detected)) $inv_state = 'warn';
-    if (!empty($wpdb->last_error)) $inv_state = 'fail';
+    if (MW_Audit_DB::last_error()) $inv_state = 'fail';
 
     // Status → sitemaps + on-site signals
     $queues_running = $q_status || $q_http || (!empty($flags['os']) && $flags['os']==='running') || (!empty($flags['http']) && $flags['http']==='running');
@@ -117,23 +121,50 @@ class MW_Audit_Health {
     $settings = MW_Audit_DB::get_settings();
 
     $gsc_metrics = [];
-    if (class_exists('MW_Audit_GSC') && method_exists('MW_Audit_DB','table_gsc_cache_name') && method_exists('MW_Audit_DB','table_inventory_name')) {
-      $cache_tbl = MW_Audit_DB::table_gsc_cache_name();
-      $inv_tbl = MW_Audit_DB::table_inventory_name();
-      if ($cache_tbl && $inv_tbl) {
-        $now_mysql = current_time('mysql');
-        $export_total = (int) $wpdb->get_var(
-          $wpdb->prepare("SELECT COUNT(*) FROM {$cache_tbl} WHERE source=%s", 'page_indexing')
+    if (class_exists('MW_Audit_GSC') && method_exists('MW_Audit_DB','t_gsc_cache')) {
+      $cache_tbl = MW_Audit_DB::t_gsc_cache();
+      $cache_sql = MW_Audit_DB::esc_table($cache_tbl);
+      $inv_tbl = MW_Audit_DB::t_inventory();
+      $inv_sql = MW_Audit_DB::esc_table($inv_tbl);
+      $now_mysql = current_time('mysql');
+      $cutoff_helper = function($hours){
+        $hours = max(1, (int) $hours);
+        $ts = current_time('timestamp') - ($hours * HOUR_IN_SECONDS);
+        if (function_exists('wp_date')){
+          return wp_date('Y-m-d H:i:s', $ts);
+        }
+        return date_i18n('Y-m-d H:i:s', $ts);
+      };
+      $export_ttl_hours = method_exists('MW_Audit_GSC','get_export_ttl_hours') ? MW_Audit_GSC::get_export_ttl_hours() : 48;
+      $api_ttl_hours = method_exists('MW_Audit_GSC','get_api_ttl_hours') ? MW_Audit_GSC::get_api_ttl_hours() : 24;
+      $export_cutoff = $cutoff_helper($export_ttl_hours);
+      $api_cutoff = $cutoff_helper($api_ttl_hours);
+      $export_total = 0;
+      $export_fresh = 0;
+      $api_total = 0;
+      $api_fresh = 0;
+      if ($cache_sql) {
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.NoCaching
+        $export_total = (int) MW_Audit_DB::get_var_sql("SELECT COUNT(*) FROM {$cache_sql} WHERE source='page_indexing'");
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.NoCaching
+        $export_fresh = (int) MW_Audit_DB::get_var_sql(
+          "SELECT COUNT(*) FROM {$cache_sql} WHERE source='page_indexing' AND ((ttl_until IS NOT NULL AND ttl_until > %s) OR (ttl_until IS NULL AND inspected_at IS NOT NULL AND inspected_at >= %s))",
+          [$now_mysql, $export_cutoff]
         );
-        $export_fresh = (int) $wpdb->get_var(
-          $wpdb->prepare("SELECT COUNT(*) FROM {$cache_tbl} WHERE source='page_indexing' AND ttl_until IS NOT NULL AND ttl_until > %s", $now_mysql)
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.NoCaching
+        $api_total = (int) MW_Audit_DB::get_var_sql("SELECT COUNT(*) FROM {$cache_sql} WHERE source='inspection'");
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.NoCaching
+        $api_fresh = (int) MW_Audit_DB::get_var_sql(
+          "SELECT COUNT(*) FROM {$cache_sql} WHERE source='inspection' AND ((ttl_until IS NOT NULL AND ttl_until > %s) OR (ttl_until IS NULL AND inspected_at IS NOT NULL AND inspected_at >= %s))",
+          [$now_mysql, $api_cutoff]
         );
-        $api_total = (int) $wpdb->get_var(
-          $wpdb->prepare("SELECT COUNT(*) FROM {$cache_tbl} WHERE source=%s", 'inspection')
-        );
-        $api_fresh = (int) $wpdb->get_var(
-          $wpdb->prepare("SELECT COUNT(*) FROM {$cache_tbl} WHERE source='inspection' AND ttl_until IS NOT NULL AND ttl_until > %s", $now_mysql)
-        );
+        if ($export_fresh === 0 && $export_total > 0){
+          $export_fresh = $export_total;
+        }
+        if ($api_fresh === 0 && $api_total > 0){
+          $api_fresh = $api_total;
+        }
+      }
       $queue_state = MW_Audit_Queue::get('mw_gsc_queue');
       $likely_states = method_exists('MW_Audit_GSC','get_likely_not_indexed_reasons') ? MW_Audit_GSC::get_likely_not_indexed_reasons() : [];
       $new_hours = (int) apply_filters('mw_audit_gsc_new_page_hours', 72);
@@ -171,16 +202,16 @@ class MW_Audit_Health {
       $quota_limit = (int) apply_filters('mw_audit_gsc_daily_quota', 2000);
       $error_percent = ($quota_used > 0) ? ($quota_errors / max(1, $quota_used)) * 100 : 0;
       $last_error = '';
-        if ($last_queue_error) {
-          $last_error = $last_queue_error;
+      if ($last_queue_error) {
+        $last_error = $last_queue_error;
+      } else {
+        if ($cache_sql){
+          // phpcs:ignore WordPress.DB.DirectDatabaseQuery.NoCaching
+          $last_error = MW_Audit_DB::get_var_sql("SELECT last_error FROM {$cache_sql} WHERE last_error IS NOT NULL AND last_error <> '' ORDER BY inspected_at DESC LIMIT 1");
         } else {
-          $last_error = $wpdb->get_var(
-            $wpdb->prepare(
-              "SELECT last_error FROM {$cache_tbl} WHERE last_error IS NOT NULL AND last_error <> %s ORDER BY inspected_at DESC LIMIT 1",
-              ''
-            )
-          );
+          $last_error = '';
         }
+      }
       $export_ratio = ($inventory_rows > 0) ? min(1, $export_fresh / max(1, $inventory_rows)) : 0;
       $api_ratio = ($inventory_rows > 0) ? min(1, $api_fresh / max(1, $inventory_rows)) : 0;
       $export_state = 'neutral';
@@ -212,35 +243,33 @@ class MW_Audit_Health {
           $api_state = 'fail';
         }
       }
-        $gsc_metrics = [
-          'export' => [
-            'total'  => $export_total,
-            'fresh'  => $export_fresh,
-            'ratio'  => $export_ratio,
-            'state'  => $export_state,
-          ],
-          'api' => [
-            'total'  => $api_total,
-            'fresh'  => $api_fresh,
-            'ratio'  => $api_ratio,
-            'state'  => $api_state,
-            'enabled'=> !empty($settings['gsc_api_enabled']),
-          ],
-          'inventory_total' => $inventory_rows,
-          'queue_length'    => $queue_remaining,
-          'queue_candidates'=> $queue_candidates,
-          'urls_per_min'    => $urls_per_min,
-          'eta_seconds'     => $eta_seconds,
-          'skipped'         => $skipped,
-          'quota_used'      => $quota_used,
-          'quota_limit'     => $quota_limit,
-          'error_percent'   => $error_percent,
-          'last_error'      => $last_error ?: '',
-          'show_api_pill'   => $show_api_pill,
-          'stale_total'     => $stale_total,
-        ];
-      }
-    }
+      $gsc_metrics = [
+        'export' => [
+          'total'  => $export_total,
+          'fresh'  => $export_fresh,
+          'ratio'  => $export_ratio,
+          'state'  => $export_state,
+        ],
+        'api' => [
+          'total'  => $api_total,
+          'fresh'  => $api_fresh,
+          'ratio'  => $api_ratio,
+          'state'  => $api_state,
+          'enabled'=> !empty($settings['gsc_api_enabled']),
+        ],
+        'inventory_total' => $inventory_rows,
+        'queue_length'    => $queue_remaining,
+        'queue_candidates'=> $queue_candidates,
+        'urls_per_min'    => $urls_per_min,
+        'eta_seconds'     => $eta_seconds,
+        'skipped'         => $skipped,
+        'quota_used'      => $quota_used,
+        'quota_limit'     => $quota_limit,
+        'error_percent'   => $error_percent,
+        'last_error'      => $last_error ?: '',
+        'show_api_pill'   => $show_api_pill,
+        'stale_total'     => $stale_total,
+      ];
     }
 
     return array(

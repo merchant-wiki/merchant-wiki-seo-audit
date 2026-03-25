@@ -520,6 +520,78 @@
     });
   })();
 
+  // GSC CSV filename guard
+  (function(){
+    const form = document.querySelector('.mw-gsc-import-csv');
+    if (!form) return;
+    const tableInput = form.querySelector('input[name="mw_gsc_pi_table"]');
+    const metaInput = form.querySelector('input[name="mw_gsc_pi_meta"]');
+
+    function mismatchMessage(expectedName, actualName){
+      if (!actualName) return '';
+      if (actualName.toLowerCase() === expectedName.toLowerCase()){
+        return '';
+      }
+      const template = (window.MW_AUDIT && MW_AUDIT.i18n && MW_AUDIT.i18n.gscFilenameMismatch)
+        ? MW_AUDIT.i18n.gscFilenameMismatch
+        : 'The filename is not %expected% but %actual%. Are you sure you want to use it?';
+      return template.replace('%expected%', expectedName).replace('%actual%', actualName);
+    }
+
+    function confirmOrReset(input, expectedName){
+      if (!input || !input.files || !input.files.length) return;
+      const fileName = input.files[0].name || '';
+      const message = mismatchMessage(expectedName, fileName);
+      if (!message){
+        return;
+      }
+      window.setTimeout(function(){
+        const keep = window.confirm(message);
+        if (!keep){
+          input.value = '';
+          // reset the label to default browser message
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      }, 0);
+    }
+
+    function attachGuard(input, expectedName){
+      if (!input) return;
+      input.addEventListener('change', function(){
+        confirmOrReset(input, expectedName);
+      });
+    }
+
+    function validateBeforeSubmit(){
+      const warnings = [];
+      const tableName = tableInput && tableInput.files && tableInput.files[0] ? tableInput.files[0].name : '';
+      const metaName = metaInput && metaInput.files && metaInput.files[0] ? metaInput.files[0].name : '';
+      const tableWarning = mismatchMessage('Table.csv', tableName);
+      if (tableWarning){
+        warnings.push(tableWarning);
+      }
+      const metaWarning = mismatchMessage('Metadata.csv', metaName);
+      if (metaWarning){
+        warnings.push(metaWarning);
+      }
+      if (!warnings.length){
+        return true;
+      }
+      const combined = warnings.join('\n');
+      return window.confirm(combined);
+    }
+
+    attachGuard(tableInput, 'Table.csv');
+    attachGuard(metaInput, 'Metadata.csv');
+
+    form.addEventListener('submit', function(evt){
+      if (!validateBeforeSubmit()){
+        evt.preventDefault();
+      }
+    });
+  })();
+
   // Gemini prompt helper
   (function(){
     function showStatus($status, message, type){

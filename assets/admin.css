@@ -1,4 +1,9 @@
 .mw-audit-wrap h1 { margin-bottom:16px }
+.mw-section-header{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:0 0 20px}
+.mw-section-title{margin:0;font-size:20px;font-weight:600;color:#1d2327}
+.mw-section-nav{display:flex;flex-wrap:wrap;gap:8px}
+.mw-section-nav .button{text-decoration:none}
+.mw-gsc-import-card{margin-top:20px}
 .mw-grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(280px,1fr)); gap:12px; }
 .mw-card { background:#fff; border:1px solid #ddd; padding:12px; border-radius:6px; }
 .mw-card .mw-card-field {
