@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: Merchant.WiKi SEO Audit
- * Plugin URI: https://merchant.wiki/
+ * Plugin URI: https://merchant.wiki/merchant-wiki-site-index-audit-plugin-for-wordpress/
  * Description: SEO index & site signals audit (inventory, sitemaps cache, on-site signals, HTTP/redirect checks, primary category map, internal/outbound link scans).
  * Version: 1.8.2
  * Author: Merchant.WiKi

@@ -1,6 +1,6 @@
 === Merchant.WiKi SEO Audit ===
 Contributors: Merchant.WiKi
-Plugin URI: https://merchant.wiki/
+Plugin URI: https://merchant.wiki/merchant-wiki-site-index-audit-plugin-for-wordpress/
 Author URI: https://merchant.wiki/
 Tags: seo, indexing, sitemap, google search console, audit
 Requires at least: 6.7
