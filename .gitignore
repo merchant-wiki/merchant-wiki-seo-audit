@@ -18,6 +18,7 @@ npm-debug.log*
 *.tar.gz
 *.rar
 *.sql
+dist/
 
 # Plugin files, which are not needed in the repo
 # Ex, if you used local tests or specific configs
