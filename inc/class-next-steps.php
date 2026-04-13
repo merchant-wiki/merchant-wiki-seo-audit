@@ -181,7 +181,7 @@ class MW_Audit_Next_Steps {
   public static function create_snapshot($label = ''){
     $rows = self::snapshot_rows();
     if (!$rows){
-      return new WP_Error('mw_audit_snapshot_empty', __('No inventory/status rows are available yet. Run Refresh On-Site Signals first.','merchant-wiki-audit'));
+      return new WP_Error('mw_audit_snapshot_empty', __('No inventory/status rows are available yet. Run Refresh On-Site Signals first.','merchant-wiki-seo-audit'));
     }
     $env = self::ensure_upload_dir();
     if (is_wp_error($env)){
@@ -190,23 +190,23 @@ class MW_Audit_Next_Steps {
     $label = trim((string) $label);
     if ($label === ''){
       /* translators: %s is replaced with the localized snapshot timestamp. */
-      $label = sprintf(__('Snapshot %s','merchant-wiki-audit'), current_time('Y-m-d H:i'));
+      $label = sprintf(__('Snapshot %s','merchant-wiki-seo-audit'), current_time('Y-m-d H:i'));
     }
     $id = 'launch-'.gmdate('Ymd-Hi');
     $filename = $id.'.json.gz';
     $path = trailingslashit($env['dir']).$filename;
     $payload = wp_json_encode($rows);
     if ($payload === false){
-      return new WP_Error('mw_audit_snapshot_encode', __('Unable to encode snapshot JSON.','merchant-wiki-audit'));
+      return new WP_Error('mw_audit_snapshot_encode', __('Unable to encode snapshot JSON.','merchant-wiki-seo-audit'));
     }
     $gz = function_exists('gzencode') ? gzencode($payload, 6) : $payload;
     $filesystem = self::get_filesystem();
     if (!$filesystem){
-      return new WP_Error('mw_audit_snapshot_write', __('Unable to initialize the filesystem API.','merchant-wiki-audit'));
+      return new WP_Error('mw_audit_snapshot_write', __('Unable to initialize the filesystem API.','merchant-wiki-seo-audit'));
     }
     $chmod = defined('FS_CHMOD_FILE') ? FS_CHMOD_FILE : null;
     if (!$filesystem->put_contents($path, $gz, $chmod)){
-      return new WP_Error('mw_audit_snapshot_write', __('Unable to write snapshot file.','merchant-wiki-audit'));
+      return new WP_Error('mw_audit_snapshot_write', __('Unable to write snapshot file.','merchant-wiki-seo-audit'));
     }
     $meta = [
       'id'         => $id,
@@ -368,7 +368,7 @@ class MW_Audit_Next_Steps {
       $redirect = admin_url('admin.php?page=mw-site-index-reports');
     }
     if (!$older || !$newer || $older === $newer){
-      wp_safe_redirect(add_query_arg('mw_snapshot_error', __('Choose two different snapshots to compare.','merchant-wiki-audit'), $redirect));
+      wp_safe_redirect(add_query_arg('mw_snapshot_error', __('Choose two different snapshots to compare.','merchant-wiki-seo-audit'), $redirect));
       exit;
     }
     $rows = self::diff_snapshots_rows($older, $newer);
@@ -390,13 +390,13 @@ class MW_Audit_Next_Steps {
     }
     $filesystem = self::get_filesystem();
     if (!$filesystem){
-      return new WP_Error('mw_next_steps_csv', __('Unable to initialize the filesystem API.','merchant-wiki-audit'));
+      return new WP_Error('mw_next_steps_csv', __('Unable to initialize the filesystem API.','merchant-wiki-seo-audit'));
     }
     $csv = self::format_csv($header_map, $rows);
     $chmod = defined('FS_CHMOD_FILE') ? FS_CHMOD_FILE : null;
     if (!$filesystem->put_contents($path, $csv, $chmod)){
       /* translators: %s is a filesystem path on the current server. */
-      return new WP_Error('mw_next_steps_csv', sprintf(__('Unable to open %s for writing.','merchant-wiki-audit'), $path));
+      return new WP_Error('mw_next_steps_csv', sprintf(__('Unable to open %s for writing.','merchant-wiki-seo-audit'), $path));
     }
     return $path;
   }
@@ -407,21 +407,21 @@ class MW_Audit_Next_Steps {
     $issues = [];
     $status = isset($row['http_status']) ? (int) $row['http_status'] : null;
     if ($status === null){
-      $issues[] = self::quick_row($row, 'missing_http', 1, __('HTTP status missing — rerun Refresh On-Site Signals before exporting.','merchant-wiki-audit'));
+      $issues[] = self::quick_row($row, 'missing_http', 1, __('HTTP status missing — rerun Refresh On-Site Signals before exporting.','merchant-wiki-seo-audit'));
     } elseif ($status < 200 || $status >= 300){
       $msg = ($status >= 500)
-        ? __('Server error — fix template/server configuration then rerun Refresh.','merchant-wiki-audit')
+        ? __('Server error — fix template/server configuration then rerun Refresh.','merchant-wiki-seo-audit')
         : (($status >= 400)
-          ? __('Client error — confirm URL should exist or add redirect.','merchant-wiki-audit')
-          : __('Unexpected redirect — verify target/canonical before launch.','merchant-wiki-audit'));
+          ? __('Client error — confirm URL should exist or add redirect.','merchant-wiki-seo-audit')
+          : __('Unexpected redirect — verify target/canonical before launch.','merchant-wiki-seo-audit'));
       $issues[] = self::quick_row($row, 'http_status', 1, $msg);
     }
     $in_sitemap = $row['in_sitemap'];
     if ((int) $in_sitemap === 0){
-      $issues[] = self::quick_row($row, 'missing_sitemap', 2, __('Submit URL in XML sitemap or include via sitemap index.','merchant-wiki-audit'));
+      $issues[] = self::quick_row($row, 'missing_sitemap', 2, __('Submit URL in XML sitemap or include via sitemap index.','merchant-wiki-seo-audit'));
     }
     if ((int) ($row['noindex'] ?? 0) === 1){
-      $issues[] = self::quick_row($row, 'noindex', 2, __('Remove unintended noindex directives or confirm gating.','merchant-wiki-audit'));
+      $issues[] = self::quick_row($row, 'noindex', 2, __('Remove unintended noindex directives or confirm gating.','merchant-wiki-seo-audit'));
     }
     return $issues;
   }
@@ -462,9 +462,9 @@ class MW_Audit_Next_Steps {
     } elseif ((int) ($row['indexed_in_google'] ?? 0) === 0){
       $evidence[] = 'local indexed_in_google=0';
     }
-    $next_step = __('Push to manual indexing rotation, then run Google Index Status with “Only queue stale/new URLs”.','merchant-wiki-audit');
+    $next_step = __('Push to manual indexing rotation, then run Google Index Status with “Only queue stale/new URLs”.','merchant-wiki-seo-audit');
     return [
-      'queue_reason'   => $gsc_reason ?: __('Likely not indexed','merchant-wiki-audit'),
+      'queue_reason'   => $gsc_reason ?: __('Likely not indexed','merchant-wiki-seo-audit'),
       'norm_url'       => $row['norm_url'],
       'http_status'    => (string) $row['http_status'],
       'inbound_links'  => $links !== null ? (string) $links : '—',
@@ -480,18 +480,18 @@ class MW_Audit_Next_Steps {
 
   private static function build_pruning_row(array $row){
     $action = 'improve';
-    $next = __('Improve content, add schema, and wire internal links.','merchant-wiki-audit');
+    $next = __('Improve content, add schema, and wire internal links.','merchant-wiki-seo-audit');
     $external_domains = (int) ($row['outbound_external_domains'] ?? 0);
     $external_links   = (int) ($row['outbound_external'] ?? 0);
     if ((int) ($row['noindex'] ?? 0) === 1){
       $action = '410';
-      $next = __('Confirm retirement and serve 410 or remove from sitemap.','merchant-wiki-audit');
+      $next = __('Confirm retirement and serve 410 or remove from sitemap.','merchant-wiki-seo-audit');
     } elseif ($external_domains >= 4 || $external_links >= 15){
       $action = 'redirect';
-      $next = __('Redirect to stronger canonical page to preserve equity.','merchant-wiki-audit');
+      $next = __('Redirect to stronger canonical page to preserve equity.','merchant-wiki-seo-audit');
     } elseif (!$row['schema_type'] && !$row['robots_meta']){
       $action = 'improve';
-      $next = __('Add schema/metadata and internal hubs before re-indexing.','merchant-wiki-audit');
+      $next = __('Add schema/metadata and internal hubs before re-indexing.','merchant-wiki-seo-audit');
     }
     $reason = $row['page_reason'] ?: $row['inspection_reason'] ?: '';
     return [
@@ -524,7 +524,7 @@ class MW_Audit_Next_Steps {
 
   private static function ensure_capability(){
     if (!current_user_can('manage_options')){
-      wp_die(esc_html__('Not allowed','merchant-wiki-audit'));
+      wp_die(esc_html__('Not allowed','merchant-wiki-seo-audit'));
     }
   }
 
@@ -535,7 +535,7 @@ class MW_Audit_Next_Steps {
     }
     $dir = trailingslashit($upload['basedir']).'mw-audit';
     if (!wp_mkdir_p($dir)){
-      return new WP_Error('mw_audit_snapshot_dir', __('Unable to create uploads directory.','merchant-wiki-audit'));
+      return new WP_Error('mw_audit_snapshot_dir', __('Unable to create uploads directory.','merchant-wiki-seo-audit'));
     }
     $url = trailingslashit($upload['baseurl']).'mw-audit';
     return ['dir'=>$dir,'url'=>$url];
@@ -565,15 +565,15 @@ class MW_Audit_Next_Steps {
       if ($meta['id'] === $id){
         $path = trailingslashit($env['dir']).$meta['filename'];
         if (!file_exists($path)){
-          return new WP_Error('mw_audit_snapshot_missing', __('Snapshot file is missing.','merchant-wiki-audit'));
+          return new WP_Error('mw_audit_snapshot_missing', __('Snapshot file is missing.','merchant-wiki-seo-audit'));
         }
         $filesystem = self::get_filesystem();
         if (!$filesystem){
-          return new WP_Error('mw_audit_snapshot_read', __('Unable to initialize the filesystem API.','merchant-wiki-audit'));
+          return new WP_Error('mw_audit_snapshot_read', __('Unable to initialize the filesystem API.','merchant-wiki-seo-audit'));
         }
         $contents = $filesystem->get_contents($path);
         if ($contents === false){
-          return new WP_Error('mw_audit_snapshot_read', __('Unable to read snapshot file.','merchant-wiki-audit'));
+          return new WP_Error('mw_audit_snapshot_read', __('Unable to read snapshot file.','merchant-wiki-seo-audit'));
         }
         if (function_exists('gzdecode')){
           $decoded = gzdecode($contents);
@@ -583,12 +583,12 @@ class MW_Audit_Next_Steps {
         }
         $rows = json_decode($contents, true);
         if (!is_array($rows)){
-          return new WP_Error('mw_audit_snapshot_json', __('Snapshot file is corrupted.','merchant-wiki-audit'));
+          return new WP_Error('mw_audit_snapshot_json', __('Snapshot file is corrupted.','merchant-wiki-seo-audit'));
         }
         return ['meta'=>$meta,'rows'=>$rows];
       }
     }
-    return new WP_Error('mw_audit_snapshot_not_found', __('Snapshot not found.','merchant-wiki-audit'));
+    return new WP_Error('mw_audit_snapshot_not_found', __('Snapshot not found.','merchant-wiki-seo-audit'));
   }
 
   private static function format_snapshot_summary(array $row){
@@ -690,62 +690,62 @@ class MW_Audit_Next_Steps {
 
   public static function quick_header(){
     return [
-      'ticket_group'   => esc_html__('Issue','merchant-wiki-audit'),
-      'priority'       => esc_html__('Priority','merchant-wiki-audit'),
-      'norm_url'       => esc_html__('URL','merchant-wiki-audit'),
-      'http_status'    => esc_html__('HTTP','merchant-wiki-audit'),
-      'in_sitemap'     => esc_html__('Sitemap','merchant-wiki-audit'),
-      'noindex'        => esc_html__('Noindex','merchant-wiki-audit'),
-      'canonical'      => esc_html__('Canonical','merchant-wiki-audit'),
-      'robots_meta'    => esc_html__('Robots','merchant-wiki-audit'),
-      'redirect_to'    => esc_html__('Redirect','merchant-wiki-audit'),
-      'last_signal_at' => esc_html__('Last signal','merchant-wiki-audit'),
-      'next_step'      => esc_html__('Next step','merchant-wiki-audit'),
+      'ticket_group'   => esc_html__('Issue','merchant-wiki-seo-audit'),
+      'priority'       => esc_html__('Priority','merchant-wiki-seo-audit'),
+      'norm_url'       => esc_html__('URL','merchant-wiki-seo-audit'),
+      'http_status'    => esc_html__('HTTP','merchant-wiki-seo-audit'),
+      'in_sitemap'     => esc_html__('Sitemap','merchant-wiki-seo-audit'),
+      'noindex'        => esc_html__('Noindex','merchant-wiki-seo-audit'),
+      'canonical'      => esc_html__('Canonical','merchant-wiki-seo-audit'),
+      'robots_meta'    => esc_html__('Robots','merchant-wiki-seo-audit'),
+      'redirect_to'    => esc_html__('Redirect','merchant-wiki-seo-audit'),
+      'last_signal_at' => esc_html__('Last signal','merchant-wiki-seo-audit'),
+      'next_step'      => esc_html__('Next step','merchant-wiki-seo-audit'),
     ];
   }
 
   public static function manual_header(){
     return [
-      'queue_reason'      => esc_html__('Reason','merchant-wiki-audit'),
-      'norm_url'          => esc_html__('URL','merchant-wiki-audit'),
-      'http_status'       => esc_html__('HTTP','merchant-wiki-audit'),
-      'inbound_links'     => esc_html__('Inbound links','merchant-wiki-audit'),
-      'in_sitemap'        => esc_html__('Sitemap','merchant-wiki-audit'),
-      'indexed_in_google' => esc_html__('Indexed (local)','merchant-wiki-audit'),
-      'gsc_reason'        => esc_html__('GSC reason','merchant-wiki-audit'),
-      'gsc_pi_reason'     => esc_html__('Page indexing detail','merchant-wiki-audit'),
-      'gsc_checked'       => esc_html__('Last checked','merchant-wiki-audit'),
-      'evidence'          => esc_html__('Evidence','merchant-wiki-audit'),
-      'next_step'         => esc_html__('Next step','merchant-wiki-audit'),
+      'queue_reason'      => esc_html__('Reason','merchant-wiki-seo-audit'),
+      'norm_url'          => esc_html__('URL','merchant-wiki-seo-audit'),
+      'http_status'       => esc_html__('HTTP','merchant-wiki-seo-audit'),
+      'inbound_links'     => esc_html__('Inbound links','merchant-wiki-seo-audit'),
+      'in_sitemap'        => esc_html__('Sitemap','merchant-wiki-seo-audit'),
+      'indexed_in_google' => esc_html__('Indexed (local)','merchant-wiki-seo-audit'),
+      'gsc_reason'        => esc_html__('GSC reason','merchant-wiki-seo-audit'),
+      'gsc_pi_reason'     => esc_html__('Page indexing detail','merchant-wiki-seo-audit'),
+      'gsc_checked'       => esc_html__('Last checked','merchant-wiki-seo-audit'),
+      'evidence'          => esc_html__('Evidence','merchant-wiki-seo-audit'),
+      'next_step'         => esc_html__('Next step','merchant-wiki-seo-audit'),
     ];
   }
 
   public static function pruning_header(){
     return [
-      'action'            => esc_html__('Action','merchant-wiki-audit'),
-      'norm_url'          => esc_html__('URL','merchant-wiki-audit'),
-      'http_status'       => esc_html__('HTTP','merchant-wiki-audit'),
-      'indexed_in_google' => esc_html__('Indexed (local)','merchant-wiki-audit'),
-      'inbound_links'     => esc_html__('Inbound links','merchant-wiki-audit'),
-      'outbound_internal' => esc_html__('Outbound internal','merchant-wiki-audit'),
-      'outbound_external' => esc_html__('Outbound external','merchant-wiki-audit'),
-      'external_domains'  => esc_html__('External domains','merchant-wiki-audit'),
-      'schema_type'       => esc_html__('Schema','merchant-wiki-audit'),
-      'robots_meta'       => esc_html__('Robots','merchant-wiki-audit'),
-      'gsc_reason'        => esc_html__('GSC signal','merchant-wiki-audit'),
-      'updated_at'        => esc_html__('Last refreshed','merchant-wiki-audit'),
-      'next_step'         => esc_html__('Next step','merchant-wiki-audit'),
+      'action'            => esc_html__('Action','merchant-wiki-seo-audit'),
+      'norm_url'          => esc_html__('URL','merchant-wiki-seo-audit'),
+      'http_status'       => esc_html__('HTTP','merchant-wiki-seo-audit'),
+      'indexed_in_google' => esc_html__('Indexed (local)','merchant-wiki-seo-audit'),
+      'inbound_links'     => esc_html__('Inbound links','merchant-wiki-seo-audit'),
+      'outbound_internal' => esc_html__('Outbound internal','merchant-wiki-seo-audit'),
+      'outbound_external' => esc_html__('Outbound external','merchant-wiki-seo-audit'),
+      'external_domains'  => esc_html__('External domains','merchant-wiki-seo-audit'),
+      'schema_type'       => esc_html__('Schema','merchant-wiki-seo-audit'),
+      'robots_meta'       => esc_html__('Robots','merchant-wiki-seo-audit'),
+      'gsc_reason'        => esc_html__('GSC signal','merchant-wiki-seo-audit'),
+      'updated_at'        => esc_html__('Last refreshed','merchant-wiki-seo-audit'),
+      'next_step'         => esc_html__('Next step','merchant-wiki-seo-audit'),
     ];
   }
 
   public static function snapshot_diff_header(){
     return [
-      'change_type'    => esc_html__('Change','merchant-wiki-audit'),
-      'norm_url'       => esc_html__('URL','merchant-wiki-audit'),
-      'before'         => esc_html__('Before','merchant-wiki-audit'),
-      'after'          => esc_html__('After','merchant-wiki-audit'),
-      'before_checked' => esc_html__('Before timestamp','merchant-wiki-audit'),
-      'after_checked'  => esc_html__('After timestamp','merchant-wiki-audit'),
+      'change_type'    => esc_html__('Change','merchant-wiki-seo-audit'),
+      'norm_url'       => esc_html__('URL','merchant-wiki-seo-audit'),
+      'before'         => esc_html__('Before','merchant-wiki-seo-audit'),
+      'after'          => esc_html__('After','merchant-wiki-seo-audit'),
+      'before_checked' => esc_html__('Before timestamp','merchant-wiki-seo-audit'),
+      'after_checked'  => esc_html__('After timestamp','merchant-wiki-seo-audit'),
     ];
   }
 }

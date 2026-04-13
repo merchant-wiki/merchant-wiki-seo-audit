@@ -1,0 +1,15 @@
+# WordPress.org release exclusions
+/.git/
+/.github/
+/.wordpress-org/
+/.vscode/
+/.idea/
+/node_modules/
+/docs/
+/tests/
+/source-*.txt
+*.code-workspace
+.DS_Store
+Pack Source.command.sh
+make_single_source.py
+merchant-wiki-audit.zip

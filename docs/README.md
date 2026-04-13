@@ -32,7 +32,7 @@ Author
 •	Built by [Merchant.WiKi](https://merchant.wiki/) — your merchant wiki & knowledge hub.
 
 Installation
-1.	Copy the plugin folder to wp-content/plugins/merchant-wiki-audit/.
+1.	Copy the plugin folder to wp-content/plugins/merchant-wiki-seo-audit/.
 2.	Activate in WP Admin → Plugins.
 3.	Open Tools → MW Audit.
 
@@ -160,10 +160,10 @@ Check DB prefix in “Debug”, run Self-Test, verify user has SELECT/INSERT/UPD
 Make sure you’re logged in and the nonce hasn’t expired; reload the admin page and retry.
 
 Internationalization (i18n)
-•	Text domain: merchant-wiki-audit
+•	Text domain: merchant-wiki-seo-audit
 •	Translations in languages/ (.pot, .po, .mo)
 •	Example (with WP-CLI):
-wp i18n make-pot wp-content/plugins/merchant-wiki-audit languages/merchant-wiki-audit.pot
+wp i18n make-pot wp-content/plugins/merchant-wiki-seo-audit languages/merchant-wiki-seo-audit.pot
 
 
 Development

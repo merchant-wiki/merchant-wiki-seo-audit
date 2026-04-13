@@ -3,6 +3,8 @@ if (!defined('ABSPATH')) exit;
 // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 
 class MW_Audit_DB {
+  const SETTINGS_OPTION = 'mw_audit_settings';
+  const LEGACY_SETTINGS_OPTION = 'mwa_settings';
   private static $column_exists_cache = [];
   private static $table_exists_cache = [];
   static function log($msg){
@@ -145,7 +147,18 @@ class MW_Audit_DB {
 
   static function get_settings(){
     $defaults = self::default_settings();
-    $stored = get_option('mwa_settings', []);
+    $sentinel = '__mw_audit_missing__';
+    $stored = get_option(self::SETTINGS_OPTION, $sentinel);
+    if ($stored === $sentinel){
+      $legacy = get_option(self::LEGACY_SETTINGS_OPTION, $sentinel);
+      if ($legacy !== $sentinel){
+        $stored = $legacy;
+        update_option(self::SETTINGS_OPTION, $legacy, false);
+        delete_option(self::LEGACY_SETTINGS_OPTION);
+      } else {
+        $stored = [];
+      }
+    }
     if (!is_array($stored)){
       $stored = [];
     }
@@ -171,7 +184,8 @@ class MW_Audit_DB {
     $merged['gsc_api_enabled'] = !empty($merged['gsc_api_enabled']);
     $merged['gdrive_export_enabled'] = !empty($merged['gdrive_export_enabled']);
     $merged['gsc_import_mode'] = in_array($merged['gsc_import_mode'], ['csv','sheets'], true) ? $merged['gsc_import_mode'] : 'csv';
-    update_option('mwa_settings', $merged, false);
+    update_option(self::SETTINGS_OPTION, $merged, false);
+    delete_option(self::LEGACY_SETTINGS_OPTION);
     return $merged;
   }
 

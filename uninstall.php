@@ -28,6 +28,7 @@ foreach (['inv','sm','os','http','pc','link','outbound','gindex','pi'] as $k){
 }
 delete_option('mw_audit_last_update');
 delete_option('mw_audit_last_inv_detected');
+delete_option('mw_audit_settings');
 delete_option('mwa_settings');
 delete_option('mw_audit_launch_snapshots');
 

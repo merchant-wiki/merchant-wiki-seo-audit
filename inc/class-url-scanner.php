@@ -103,7 +103,7 @@ class MW_Audit_UrlScanner {
       }
 
       if (isset($visited[$location]) || $redirects >= self::MAX_REDIRECTS){
-        return [new WP_Error('mw_audit_redirect_loop', __('Redirect loop detected','merchant-wiki-audit'), ['url'=>$current,'location'=>$location]), $current, $location];
+        return [new WP_Error('mw_audit_redirect_loop', __('Redirect loop detected','merchant-wiki-seo-audit'), ['url'=>$current,'location'=>$location]), $current, $location];
       }
 
       $visited[$current] = true;

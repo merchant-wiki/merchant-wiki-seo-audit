@@ -8,7 +8,7 @@
  * Author URI: https://merchant.wiki/
  * License: GPLv3 or later
  * License URI: https://www.gnu.org/licenses/gpl-3.0.html
- * Text Domain: merchant-wiki-audit
+ * Text Domain: merchant-wiki-seo-audit
  * Domain Path: /languages
  */
 if (!defined('ABSPATH')) exit;
@@ -83,33 +83,33 @@ add_action('admin_enqueue_scripts', function($hook){
     'nonces' => $ajax_nonces,
     'settings' => MW_Audit_DB::get_settings(),
     'i18n'   => [
-      'error'        => __('Request failed', 'merchant-wiki-audit'),
-      'done'         => __('Done', 'merchant-wiki-audit'),
-      'ttlSaved'     => __('TTL updated', 'merchant-wiki-audit'),
-      'sheetRequired'=> __('Enter Google Sheet URL or ID', 'merchant-wiki-audit'),
-      'syncWorking'  => __('Sync in progress...', 'merchant-wiki-audit'),
+      'error'        => __('Request failed', 'merchant-wiki-seo-audit'),
+      'done'         => __('Done', 'merchant-wiki-seo-audit'),
+      'ttlSaved'     => __('TTL updated', 'merchant-wiki-seo-audit'),
+      'sheetRequired'=> __('Enter Google Sheet URL or ID', 'merchant-wiki-seo-audit'),
+      'syncWorking'  => __('Sync in progress...', 'merchant-wiki-seo-audit'),
       /* translators: %imported% and %skipped% will be replaced with counts of processed rows. */
-      'syncDone'     => __('Import finished: %imported% imported, %skipped% skipped', 'merchant-wiki-audit'),
-      'priorityLoading' => __('Loading priority list...', 'merchant-wiki-audit'),
-      'priorityEmpty'   => __('No URLs match this filter yet.', 'merchant-wiki-audit'),
-      'priorityError'   => __('Unable to load the priority list.', 'merchant-wiki-audit'),
-      'assembleWorking' => __('Building combined sheet…', 'merchant-wiki-audit'),
+      'syncDone'     => __('Import finished: %imported% imported, %skipped% skipped', 'merchant-wiki-seo-audit'),
+      'priorityLoading' => __('Loading priority list...', 'merchant-wiki-seo-audit'),
+      'priorityEmpty'   => __('No URLs match this filter yet.', 'merchant-wiki-seo-audit'),
+      'priorityError'   => __('Unable to load the priority list.', 'merchant-wiki-seo-audit'),
+      'assembleWorking' => __('Building combined sheet…', 'merchant-wiki-seo-audit'),
       /* translators: %link% will be replaced with a URL to the generated sheet. */
-      'assembleDone'    => __('Combined sheet ready: %link%', 'merchant-wiki-audit'),
-      'assembleError'   => __('Unable to assemble sheets. Check the URLs and try again.', 'merchant-wiki-audit'),
-      'geminiCopied'    => __('Prompt copied. Gemini opened in a new tab — paste the current content right away.', 'merchant-wiki-audit'),
-      'geminiCopyFailed'=> __('Gemini opened, but the prompt was not copied. Grab it manually from the table.', 'merchant-wiki-audit'),
-      'similarNeedUrl'  => __('Enter a URL first.', 'merchant-wiki-audit'),
-      'similarReady'    => __('Signals loaded. Adjust filters and click “Show matches.”', 'merchant-wiki-audit'),
-      'similarLoadFailed'=> __('Unable to load URL. Make sure it exists in the inventory.', 'merchant-wiki-audit'),
-      'similarNeedReference'=> __('Load a reference URL first.', 'merchant-wiki-audit'),
-      'similarQueryFailed'=> __('Unable to load matches.', 'merchant-wiki-audit'),
-      'similarNoRows'   => __('No matches found for the selected filters.', 'merchant-wiki-audit'),
+      'assembleDone'    => __('Combined sheet ready: %link%', 'merchant-wiki-seo-audit'),
+      'assembleError'   => __('Unable to assemble sheets. Check the URLs and try again.', 'merchant-wiki-seo-audit'),
+      'geminiCopied'    => __('Prompt copied. Gemini opened in a new tab — paste the current content right away.', 'merchant-wiki-seo-audit'),
+      'geminiCopyFailed'=> __('Gemini opened, but the prompt was not copied. Grab it manually from the table.', 'merchant-wiki-seo-audit'),
+      'similarNeedUrl'  => __('Enter a URL first.', 'merchant-wiki-seo-audit'),
+      'similarReady'    => __('Signals loaded. Adjust filters and click “Show matches.”', 'merchant-wiki-seo-audit'),
+      'similarLoadFailed'=> __('Unable to load URL. Make sure it exists in the inventory.', 'merchant-wiki-seo-audit'),
+      'similarNeedReference'=> __('Load a reference URL first.', 'merchant-wiki-seo-audit'),
+      'similarQueryFailed'=> __('Unable to load matches.', 'merchant-wiki-seo-audit'),
+      'similarNoRows'   => __('No matches found for the selected filters.', 'merchant-wiki-seo-audit'),
       /* translators: 1: first row number shown, 2: last row number shown, 3: total number of matches. */
-      'similarSummary'  => __('Showing %1$s–%2$s of %3$s matches', 'merchant-wiki-audit'),
-      'similarExportError' => __('Run a similar search before exporting.', 'merchant-wiki-audit'),
+      'similarSummary'  => __('Showing %1$s–%2$s of %3$s matches', 'merchant-wiki-seo-audit'),
+      'similarExportError' => __('Run a similar search before exporting.', 'merchant-wiki-seo-audit'),
       /* translators: %expected%: required filename; %actual%: filename chosen by the user. */
-      'gscFilenameMismatch' => __('The filename is not %expected% but %actual%. Are you sure you want to use it?', 'merchant-wiki-audit'),
+      'gscFilenameMismatch' => __('The filename is not %expected% but %actual%. Are you sure you want to use it?', 'merchant-wiki-seo-audit'),
     ]
   ]);
 });

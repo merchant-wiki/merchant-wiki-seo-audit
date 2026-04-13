@@ -20,6 +20,7 @@ class MW_Audit_GSC {
   const SITES_ENDPOINT = 'https://www.googleapis.com/webmasters/v3/sites';
   const INSPECT_ENDPOINT = 'https://searchconsole.googleapis.com/v1/urlInspection/index:inspect';
   const SHEETS_BASE_ENDPOINT = 'https://sheets.googleapis.com/v4/spreadsheets';
+  const OAUTH_STATE_TTL = 900; // 15 minutes
 
   const LIKELY_NOT_INDEXED_DEFAULT = [
     'Discovered - currently not indexed',
@@ -32,6 +33,46 @@ class MW_Audit_GSC {
 
   private static function option_key($key){
     return self::OPTION_PREFIX . sanitize_key($key);
+  }
+
+  private static function generate_oauth_state_token(){
+    if (function_exists('random_bytes')){
+      try {
+        return bin2hex(random_bytes(16));
+      } catch (Exception $e){
+        // fall through to wp_generate_password()
+      }
+    }
+    return strtolower(wp_generate_password(32, false, false));
+  }
+
+  private static function oauth_state_transient_key($token){
+    $hash = hash('sha256', (string) $token);
+    return 'mw_audit_gsc_state_'.$hash;
+  }
+
+  private static function create_oauth_state($mode){
+    $mode = $mode ? sanitize_key($mode) : 'default';
+    $token = self::generate_oauth_state_token();
+    $payload = [
+      'mode'       => $mode,
+      'created_at' => time(),
+    ];
+    set_transient(self::oauth_state_transient_key($token), $payload, self::OAUTH_STATE_TTL);
+    return $token;
+  }
+
+  private static function consume_oauth_state($token){
+    if (!$token){
+      return null;
+    }
+    $key = self::oauth_state_transient_key($token);
+    $payload = get_transient($key);
+    delete_transient($key);
+    if (!is_array($payload) || empty($payload['mode'])){
+      return null;
+    }
+    return $payload;
   }
 
   private static function get_option($key, $default = ''){
@@ -632,18 +673,18 @@ class MW_Audit_GSC {
       }
     }
     if (!$mapping['url']){
-      return new WP_Error('mw_audit_pi_missing_url', __('Could not detect the URL column in the Page Indexing export.','merchant-wiki-audit'));
+      return new WP_Error('mw_audit_pi_missing_url', __('Could not detect the URL column in the Page Indexing export.','merchant-wiki-seo-audit'));
     }
     return $mapping;
   }
 
   private static function values_to_assoc_rows(array $values){
     if (empty($values) || !is_array($values)){
-      return new WP_Error('mw_audit_pi_empty', __('The Page Indexing export appears to be empty.','merchant-wiki-audit'));
+      return new WP_Error('mw_audit_pi_empty', __('The Page Indexing export appears to be empty.','merchant-wiki-seo-audit'));
     }
     $header_row = array_shift($values);
     if (!$header_row || !is_array($header_row)){
-      return new WP_Error('mw_audit_pi_header', __('The Page Indexing export is missing a header row.','merchant-wiki-audit'));
+      return new WP_Error('mw_audit_pi_header', __('The Page Indexing export is missing a header row.','merchant-wiki-seo-audit'));
     }
     $header_meta = self::build_header_meta($header_row);
     $mapping = self::detect_page_indexing_mapping($header_meta);
@@ -706,11 +747,11 @@ class MW_Audit_GSC {
 
   public static function parse_page_indexing_csv($file_path){
     if (!file_exists($file_path) || !is_readable($file_path)){
-      return new WP_Error('mw_audit_pi_file', __('Unable to read the uploaded CSV file.','merchant-wiki-audit'));
+      return new WP_Error('mw_audit_pi_file', __('Unable to read the uploaded CSV file.','merchant-wiki-seo-audit'));
     }
     $rows = self::read_csv_rows($file_path, ',');
     if (!$rows){
-      return new WP_Error('mw_audit_pi_empty', __('The CSV file appears to be empty.','merchant-wiki-audit'));
+      return new WP_Error('mw_audit_pi_empty', __('The CSV file appears to be empty.','merchant-wiki-seo-audit'));
     }
     if (self::csv_is_single_column($rows)){
       $alt = self::read_csv_rows($file_path, ';');
@@ -723,15 +764,15 @@ class MW_Audit_GSC {
 
   public static function parse_page_indexing_metadata_csv($file_path){
     if (!file_exists($file_path) || !is_readable($file_path)){
-      return new WP_Error('mw_audit_pi_file', __('Unable to read the uploaded CSV file.','merchant-wiki-audit'));
+      return new WP_Error('mw_audit_pi_file', __('Unable to read the uploaded CSV file.','merchant-wiki-seo-audit'));
     }
     $rows = self::read_csv_rows($file_path, ',');
     if (!$rows){
-      return new WP_Error('mw_audit_pi_empty', __('The Metadata CSV appears to be empty.','merchant-wiki-audit'));
+      return new WP_Error('mw_audit_pi_empty', __('The Metadata CSV appears to be empty.','merchant-wiki-seo-audit'));
     }
     $meta = self::metadata_rows_to_assoc($rows);
     if (!$meta){
-      return new WP_Error('mw_audit_pi_empty', __('Unable to detect metadata entries in the CSV.','merchant-wiki-audit'));
+      return new WP_Error('mw_audit_pi_empty', __('Unable to detect metadata entries in the CSV.','merchant-wiki-seo-audit'));
     }
     return [
       'meta' => $meta,
@@ -857,7 +898,7 @@ class MW_Audit_GSC {
       }
       $last_error = $values;
     }
-    return $last_error ?: new WP_Error('mw_audit_gsc_sheet_range', __('Unable to read the requested Google Sheet range.','merchant-wiki-audit'));
+    return $last_error ?: new WP_Error('mw_audit_gsc_sheet_range', __('Unable to read the requested Google Sheet range.','merchant-wiki-seo-audit'));
   }
 
   private static function metadata_rows_to_assoc(array $values){
@@ -911,11 +952,11 @@ class MW_Audit_GSC {
 
   private static function create_result_sheet(array $rows){
     if (!$rows){
-      return new WP_Error('mw_audit_pi_empty', __('No rows detected in the provided Google Sheets.','merchant-wiki-audit'));
+      return new WP_Error('mw_audit_pi_empty', __('No rows detected in the provided Google Sheets.','merchant-wiki-seo-audit'));
     }
     $token = self::get_access_token();
     if (!$token){
-      return new WP_Error('mw_audit_gsc_sheet_token', __('Unable to obtain Google access token for Sheets API.','merchant-wiki-audit'));
+      return new WP_Error('mw_audit_gsc_sheet_token', __('Unable to obtain Google access token for Sheets API.','merchant-wiki-seo-audit'));
     }
     $title = sprintf('MW Audit Page Indexing (%s)', function_exists('wp_date') ? wp_date('Y-m-d H:i') : date_i18n('Y-m-d H:i'));
     $create = wp_remote_post(self::SHEETS_BASE_ENDPOINT, [
@@ -932,7 +973,7 @@ class MW_Audit_GSC {
     $code = (int) wp_remote_retrieve_response_code($create);
     $body = json_decode(wp_remote_retrieve_body($create), true);
     if ($code !== 200 || empty($body['spreadsheetId'])){
-      return new WP_Error('mw_audit_sheet_create', __('Failed to create a Google Sheet for the combined export.','merchant-wiki-audit'));
+      return new WP_Error('mw_audit_sheet_create', __('Failed to create a Google Sheet for the combined export.','merchant-wiki-seo-audit'));
     }
     $sheet_id = $body['spreadsheetId'];
     $sheet_name = isset($body['sheets'][0]['properties']['title']) ? $body['sheets'][0]['properties']['title'] : 'Sheet1';
@@ -955,7 +996,7 @@ class MW_Audit_GSC {
       return $update;
     }
     if ((int) wp_remote_retrieve_response_code($update) !== 200){
-      return new WP_Error('mw_audit_sheet_write', __('Failed to populate the combined Google Sheet.','merchant-wiki-audit'));
+      return new WP_Error('mw_audit_sheet_write', __('Failed to populate the combined Google Sheet.','merchant-wiki-seo-audit'));
     }
     return [
       'sheet_id'  => $sheet_id,
@@ -970,7 +1011,7 @@ class MW_Audit_GSC {
     foreach ($sources as $source){
       list($sheet_id,) = self::normalize_sheet_reference($source, '');
       if ($sheet_id === ''){
-        return new WP_Error('mw_audit_sheet_id', __('One of the provided Google Sheet links is empty or invalid.','merchant-wiki-audit'));
+        return new WP_Error('mw_audit_sheet_id', __('One of the provided Google Sheet links is empty or invalid.','merchant-wiki-seo-audit'));
       }
       $meta_values = self::fetch_sheet_values_with_fallback($sheet_id, ['Metadata!A:B','metadata!A:B','METADATA!A:B']);
       if (is_wp_error($meta_values)){
@@ -999,7 +1040,7 @@ class MW_Audit_GSC {
           $verdict = $row[$parsed['mapping']['status']] ?? '';
         }
         if ($verdict === ''){
-          $verdict = $reason ? __('Not indexed','merchant-wiki-audit') : __('Indexed','merchant-wiki-audit');
+          $verdict = $reason ? __('Not indexed','merchant-wiki-seo-audit') : __('Indexed','merchant-wiki-seo-audit');
         }
         $coverage_state = '';
         if (!empty($parsed['mapping']['reason'])){
@@ -1017,7 +1058,7 @@ class MW_Audit_GSC {
       }
     }
     if ($total_rows === 0){
-      return new WP_Error('mw_audit_pi_empty', __('No rows detected in the provided Google Sheets.','merchant-wiki-audit'));
+      return new WP_Error('mw_audit_pi_empty', __('No rows detected in the provided Google Sheets.','merchant-wiki-seo-audit'));
     }
     $sheet = self::create_result_sheet($rows);
     if (is_wp_error($sheet)){
@@ -1030,11 +1071,11 @@ class MW_Audit_GSC {
 
   public static function fetch_sheet_values($spreadsheet_id, $range = null){
     if (!self::is_connected() || !self::has_sheets_scope()){
-      return new WP_Error('mw_audit_gsc_sheets_scope', __('Google Sheets access is not connected.','merchant-wiki-audit'));
+      return new WP_Error('mw_audit_gsc_sheets_scope', __('Google Sheets access is not connected.','merchant-wiki-seo-audit'));
     }
     $token = self::get_access_token();
     if (!$token){
-      return new WP_Error('mw_audit_gsc_sheet_token', __('Unable to obtain Google access token for Sheets API.','merchant-wiki-audit'));
+      return new WP_Error('mw_audit_gsc_sheet_token', __('Unable to obtain Google access token for Sheets API.','merchant-wiki-seo-audit'));
     }
     $range = $range ?: 'A:Z';
     $url = sprintf('%s/%s/values/%s', self::SHEETS_BASE_ENDPOINT, rawurlencode($spreadsheet_id), rawurlencode($range));
@@ -1050,11 +1091,11 @@ class MW_Audit_GSC {
     $code = (int) wp_remote_retrieve_response_code($response);
     $data = json_decode(wp_remote_retrieve_body($response), true);
     if ($code !== 200){
-      $message = isset($data['error']['message']) ? $data['error']['message'] : __('Failed to fetch Google Sheet data.','merchant-wiki-audit');
+      $message = isset($data['error']['message']) ? $data['error']['message'] : __('Failed to fetch Google Sheet data.','merchant-wiki-seo-audit');
       return new WP_Error('mw_audit_gsc_sheet_http', $message);
     }
     if (empty($data['values']) || !is_array($data['values'])){
-      return new WP_Error('mw_audit_gsc_sheet_empty', __('The Google Sheet did not return any values.','merchant-wiki-audit'));
+      return new WP_Error('mw_audit_gsc_sheet_empty', __('The Google Sheet did not return any values.','merchant-wiki-seo-audit'));
     }
     return $data['values'];
   }
@@ -1165,6 +1206,10 @@ class MW_Audit_GSC {
     $mode = $mode ? sanitize_key($mode) : 'default';
     $include_sheets = ($mode === 'sheets');
     $scopes = self::get_scopes_for_auth($include_sheets);
+    $state_token = self::create_oauth_state($mode);
+    if (!$state_token){
+      return '';
+    }
     $params = [
       'response_type' => 'code',
       'client_id'     => self::get_client_id(),
@@ -1172,7 +1217,7 @@ class MW_Audit_GSC {
       'scope'         => implode(' ', $scopes),
       'access_type'   => 'offline',
       'prompt'        => 'consent',
-      'state'         => $mode,
+      'state'         => $state_token,
     ];
     return 'https://accounts.google.com/o/oauth2/v2/auth?'.http_build_query($params, '', '&');
   }
@@ -1183,14 +1228,19 @@ class MW_Audit_GSC {
 
   public static function handle_oauth_callback(){
     if (!self::is_configured()){
-      wp_die(esc_html__('Google Search Console credentials are not configured.','merchant-wiki-audit'));
+      wp_die(esc_html__('Google Search Console credentials are not configured.','merchant-wiki-seo-audit'));
     }
-    $state = filter_input(INPUT_GET, 'state', FILTER_UNSAFE_RAW, FILTER_NULL_ON_FAILURE);
-    $state = $state ? sanitize_key($state) : 'default';
+    $state_param = filter_input(INPUT_GET, 'state', FILTER_UNSAFE_RAW, FILTER_NULL_ON_FAILURE);
+    $state_token = $state_param ? sanitize_text_field($state_param) : '';
+    $state_payload = self::consume_oauth_state($state_token);
+    if (!$state_payload){
+      wp_die(esc_html__('Invalid OAuth state. Please restart the connection process.','merchant-wiki-seo-audit'));
+    }
+    $state = $state_payload['mode'] ?? 'default';
     $code_param = filter_input(INPUT_GET, 'code', FILTER_UNSAFE_RAW, FILTER_NULL_ON_FAILURE);
     $code = $code_param ? sanitize_text_field($code_param) : '';
     if (!$code){
-      wp_die(esc_html__('Missing authorization code.','merchant-wiki-audit'));
+      wp_die(esc_html__('Missing authorization code.','merchant-wiki-seo-audit'));
     }
     $body = [
       'code'          => $code,
@@ -1207,7 +1257,7 @@ class MW_Audit_GSC {
       $error_message = sanitize_text_field($response->get_error_message());
       $message = sprintf(
         /* translators: %s: WordPress HTTP error message. */
-        __('Failed to exchange authorization code: %s','merchant-wiki-audit'),
+        __('Failed to exchange authorization code: %s','merchant-wiki-seo-audit'),
         $error_message
       );
       wp_die(esc_html($message));
@@ -1215,13 +1265,13 @@ class MW_Audit_GSC {
     $code_http = (int) wp_remote_retrieve_response_code($response);
     $data = json_decode(wp_remote_retrieve_body($response), true);
     if ($code_http !== 200 || empty($data['access_token'])){
-      wp_die(esc_html__('Failed to obtain access token.','merchant-wiki-audit'));
+      wp_die(esc_html__('Failed to obtain access token.','merchant-wiki-seo-audit'));
     }
     $refresh = isset($data['refresh_token']) ? $data['refresh_token'] : '';
     if (!$refresh){
       $refresh = self::get_refresh_token();
       if (!$refresh){
-        wp_die(esc_html__('Google did not return a refresh token. Ensure you allow offline access.','merchant-wiki-audit'));
+        wp_die(esc_html__('Google did not return a refresh token. Ensure you allow offline access.','merchant-wiki-seo-audit'));
       }
     }
     self::save_tokens($data['access_token'], $data['expires_in'] ?? 3600, $refresh);
@@ -1310,25 +1360,25 @@ class MW_Audit_GSC {
     ];
     if (!self::is_connected()){
       foreach ($urls as $url){
-        $results[$url] = ['indexed'=>null,'error'=>__('Google Search Console is not connected.','merchant-wiki-audit')];
+        $results[$url] = ['indexed'=>null,'error'=>__('Google Search Console is not connected.','merchant-wiki-seo-audit')];
       }
-      $errors[] = __('Google Search Console is not connected.','merchant-wiki-audit');
+      $errors[] = __('Google Search Console is not connected.','merchant-wiki-seo-audit');
       return ['results'=>$results,'errors'=>$errors,'meta'=>$meta];
     }
     $property = self::get_property();
     if (!$property){
       foreach ($urls as $url){
-        $results[$url] = ['indexed'=>null,'error'=>__('Google property is not configured.','merchant-wiki-audit')];
+        $results[$url] = ['indexed'=>null,'error'=>__('Google property is not configured.','merchant-wiki-seo-audit')];
       }
-      $errors[] = __('Google property is not configured.','merchant-wiki-audit');
+      $errors[] = __('Google property is not configured.','merchant-wiki-seo-audit');
       return ['results'=>$results,'errors'=>$errors,'meta'=>$meta];
     }
     $token = self::get_access_token();
     if (!$token){
       foreach ($urls as $url){
-        $results[$url] = ['indexed'=>null,'error'=>__('Unable to obtain Google access token.','merchant-wiki-audit')];
+        $results[$url] = ['indexed'=>null,'error'=>__('Unable to obtain Google access token.','merchant-wiki-seo-audit')];
       }
-      $errors[] = __('Unable to obtain Google access token.','merchant-wiki-audit');
+      $errors[] = __('Unable to obtain Google access token.','merchant-wiki-seo-audit');
       return ['results'=>$results,'errors'=>$errors,'meta'=>$meta];
     }
     $cache_map = self::get_cache_rows($urls, 'inspection');
@@ -1340,7 +1390,7 @@ class MW_Audit_GSC {
       if ($norm === ''){
         $message = sprintf(
           /* translators: %s: invalid URL provided by the user. */
-          __('Invalid URL provided: %s','merchant-wiki-audit'),
+          __('Invalid URL provided: %s','merchant-wiki-seo-audit'),
           esc_html($url)
         );
         $results[$url] = ['indexed'=>null,'error'=>$message];
@@ -1391,7 +1441,7 @@ class MW_Audit_GSC {
       if (is_wp_error($response)){
         $message = sprintf(
           /* translators: 1: inspected URL, 2: error details. */
-          __('Error inspecting %1$s: %2$s','merchant-wiki-audit'),
+          __('Error inspecting %1$s: %2$s','merchant-wiki-seo-audit'),
           $url,
           $response->get_error_message()
         );
@@ -1408,7 +1458,7 @@ class MW_Audit_GSC {
         $results[$url] = ['indexed'=>null,'error'=>$message,'source'=>'inspection'];
         $errors[] = sprintf(
           /* translators: 1: inspected URL, 2: error details. */
-          __('Error inspecting %1$s: %2$s','merchant-wiki-audit'),
+          __('Error inspecting %1$s: %2$s','merchant-wiki-seo-audit'),
           $url,
           $message
         );

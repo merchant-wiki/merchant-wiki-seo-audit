@@ -1,4 +1,4 @@
-Product: WordPress plugin “Merchant.WiKi — Site Index Audit” (merchant-wiki-audit).
+Product: WordPress plugin “Merchant.WiKi — Site Index Audit” (merchant-wiki-seo-audit).
 
 Goal: Crawl/collect site URLs into an inventory, hydrate per URL signals (sitemap, robots/noindex, HTTP status, canonical, JSON LD schema type, inbound links), build Post→Primary Category (PC) map, and present results in a sortable admin table with health indicators.
 
@@ -6,7 +6,7 @@ Hard constraints
 •	Do not change DB schema (tables already exist in customer DB). Use $wpdb->prefix.
 •	Support custom table prefixes (not only wp_).
 •	No output before headers; no accidental whitespace/BOM; avoid breaking XML sitemaps.
-•	i18n: text domain merchant-wiki-audit.
+•	i18n: text domain merchant-wiki-seo-audit.
 •	Uninstall hook: static callable only (no closures).
 
 High level steps (UI blocks)
