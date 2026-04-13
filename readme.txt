@@ -1,14 +1,16 @@
 === Merchant.WiKi SEO Audit ===
-Contributors: Merchant.WiKi
+Contributors: merchantwiki
 Plugin URI: https://merchant.wiki/merchant-wiki-site-index-audit-plugin-for-wordpress/
 Author URI: https://merchant.wiki/
 Tags: seo, indexing, sitemap, google search console, audit
 Requires at least: 6.7
-Tested up to: 6.9.4
+Tested up to: 6.9
 Requires PHP: 8.0
 Stable tag: 1.8.2
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
+
+Build URL inventories, cache sitemaps, refresh SEO signals, and connect Google Search Console for exportable index audits.
 
 == Description ==
 
@@ -257,6 +259,40 @@ schema_type = — → no JSON-LD schema type (e.g., Article) was detected. That�
 http_status = 200 → response comes back without redirects or errors.
 
 updated_at → timestamp when this record was last refreshed in the inventory.
+
+== External services ==
+
+=== Google OAuth / Google account authorization ===
+- Use: Lets administrators connect their Google account so the plugin can reach Search Console data and, if requested, Google Sheets.
+- Data sent: During the consent flow the site posts your Google Cloud client ID, client secret, redirect URI, and the one-time authorization code to https://oauth2.googleapis.com/token, then calls https://www.googleapis.com/oauth2/v2/userinfo to record which account is connected.
+- When data moves: Only when an administrator clicks “Connect Google Account” or “Connect Sheets”; no background jobs refresh tokens unless you start the OAuth flow.
+- Optional: Yes. Inventory building, sitemap caching, crawls, and reports continue to run without signing in to Google.
+- Terms: Google Terms of Service (https://policies.google.com/terms)
+- Privacy: Google Privacy Policy (https://policies.google.com/privacy)
+
+=== Google Search Console API ===
+- Use: Fetches your property list and runs the URL Inspection API so you can log index verdicts and TTLs in `mw_gsc_cache`.
+- Data sent: Each inspection call posts the selected property (`siteUrl`) plus every queued WordPress URL as `inspectionUrl`, and uses your OAuth access token for authorization.
+- When data moves: Only while you run “Check Google Index Status” or refresh the property selector—no calls fire automatically otherwise.
+- Optional: Yes. The rest of the audit features work without Search Console; enabling it simply enriches the reports.
+- Terms: Google API Terms of Service (https://developers.google.com/terms)
+- Privacy: Google Privacy Policy (https://policies.google.com/privacy)
+
+=== Google Sheets API ===
+- Use: Imports Page Indexing exports stored in Google Sheets and can build a combined export sheet through the “Assemble” tool.
+- Data sent: Requests include the spreadsheet ID/range you provide, and when you create the combined export the plugin writes rows containing the URL, verdict, coverage reason, last crawled time, exported timestamp, and source label to a new sheet in your Drive.
+- When data moves: Only when you opt into the Sheets import/export mode; the plugin never touches Sheets unless you paste sheet URLs and start the task.
+- Optional: Yes. CSV uploads cover the same workflow if you prefer not to grant Sheets access.
+- Terms: Google API Terms of Service (https://developers.google.com/terms)
+- Privacy: Google Privacy Policy (https://policies.google.com/privacy)
+
+=== Gemini link ===
+- Use: Adds an “Open Gemini” button in the Stale Content Refresh table so you can open https://gemini.google.com/app with a prefilled brief for that URL.
+- Data sent: Clicking the button encodes the page URL, publish and update dates, title, and current meta description into the `prompt` query string; clipboard text with the page body stays on your device until you paste it.
+- When data moves: Only when someone presses “Open Gemini”; nothing is transmitted automatically.
+- Optional: Yes. You can ignore the Gemini link and still use every refresh workflow.
+- Terms: Google Terms of Service (https://policies.google.com/terms)
+- Privacy: Google Privacy Policy (https://policies.google.com/privacy)
 
 ---------------------
 
