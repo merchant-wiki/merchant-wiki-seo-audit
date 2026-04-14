@@ -43,9 +43,7 @@ Disclaimer
 3. Reports table and filter controls.
 4. Settings / Google Search Console integration.
 
----------------------
-
-Blocks At a Glance
+== Blocks At a Glance ==
 
 Rebuild Inventory
 • What: Collects every public post/page/term/home URL into `mw_url_inventory`.
@@ -147,9 +145,8 @@ Connecting Google Search Console
 6. After the OAuth popup closes, use the **Select property** dropdown to choose the Search Console site you want to audit (or paste the exact URL manually), save, and optionally click **Connect Sheets** if you enabled the Sheets API.
 7. Once a property is selected you can toggle `Enable GSC Inspection API spot checks`, run **Check Google Index Status**, and still import CSVs whenever you need bulk Page Indexing reasons.
 
----------------------
+== Cases ==
 
-Cases
 1. Quick technical audit without GSC
    • Run: Rebuild Inventory → Prepare / Cache Sitemaps → Refresh On-Site Signals → Internal Link Scan.
    • Filters: sort the table by `http_status`, `in_sitemap`, `noindex`, `inbound_links`. Export CSV and highlight rows where `http_status ≠ 200`, `in_sitemap = 0`, or `noindex = 1`.
@@ -197,9 +194,8 @@ Post-launch monitoring snapshots
 - Diffing snapshots: after the follow-up crawl completes, save a second snapshot. Use the same panel or `wp mw-audit next-steps snapshot-diff --before=<id> --after=<id>` to export a CSV showing URLs with changed HTTP codes, canonical targets, or redirect destinations.
 - When to take them: at minimum grab (a) baseline before go-live, (b) immediately after launch once refresh completes, and (c) after remediation so you can share “before/after” deltas. For phased rollouts, snapshot every significant batch.
 
----------------------
+== FAQ ==
 
-FAQ
 Q: Why does “Show likely not indexed” sometimes return zero rows even though GSC shows issues?
 A: The table only shows URLs whose `g_ins`/`g_page` coverage state is cached locally. If the Inspection queue hasn’t refreshed the URL, the CSV wasn’t imported, or the cache entry expired (TTL), the filter will be empty until fresh data arrives.
 
